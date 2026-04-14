@@ -2,7 +2,11 @@ title_filter:
   include_any:
     - "Software Engineer"
     - "Backend"
+    - "Back-end"
     - "Full Stack"
+    - "Frontend"
+    - "front-end"
+    - "developer"
     - "Distributed Systems"
     - "Fintech"
     - "Software Development Engineer"

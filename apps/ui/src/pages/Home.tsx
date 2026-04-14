@@ -3,11 +3,8 @@ import { useEffect, useState } from 'react';
 export type JobStatusEnum = 'ACTIVE' | 'IGNORED' | 'ALL';
 
 export interface IAIAnalysis {
-  apply_decision?: string;
-  scores?: Record<string, { score: number; reason: string }>;
-  working_in_my_favor?: string[];
-  critical_gaps?: string[];
-  missing_keywords?: string[];
+  score?: number;
+  reason?: string;
 }
 
 export interface IJobPosition {
@@ -79,7 +76,7 @@ function Home() {
       {/* Header Top Bar */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', flexShrink: 0 }}>
         <h2 style={{ color: 'var(--text-main)', margin: 0 }}>/// JOBS</h2>
-        
+
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
           <>
             <button
@@ -95,7 +92,7 @@ function Home() {
             >
               {selectedRescanIds.size === filteredJobs.length && filteredJobs.length > 0 ? 'DESELECT ALL' : 'SELECT ALL'}
             </button>
-            
+
             <button
               className="btn btn-accent"
               style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', opacity: selectedRescanIds.size === 0 ? 0.5 : 1 }}
@@ -178,7 +175,7 @@ function Home() {
             <option value="IGNORED">VIEW IGNORED</option>
           </select>
         </div>
-      {/* Toolbar End */}
+        {/* Toolbar End */}
       </div>
 
       {/* Ashby scan feedback toast */}
@@ -227,22 +224,22 @@ function Home() {
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', color: selectedJobId === job.id ? 'var(--text-main)' : 'var(--text-dim)', fontWeight: 'bold', fontSize: '1.1rem', paddingRight: '1rem' }}>
-                    
+
                     <div onClick={(e) => {
                       e.stopPropagation();
                       const next = new Set(selectedRescanIds);
                       if (next.has(job.id)) next.delete(job.id);
                       else next.add(job.id);
                       setSelectedRescanIds(next);
-                    }} style={{ 
-                      marginRight: '0.6rem', 
+                    }} style={{
+                      marginRight: '0.6rem',
                       marginTop: '0.1rem',
-                      width: '18px', 
-                      height: '18px', 
+                      width: '18px',
+                      height: '18px',
                       flexShrink: 0,
-                      border: '1px solid var(--accent)', 
-                      display: 'flex', 
-                      alignItems: 'center', 
+                      border: '1px solid var(--accent)',
+                      display: 'flex',
+                      alignItems: 'center',
                       justifyContent: 'center',
                       background: selectedRescanIds.has(job.id) ? 'var(--accent)' : 'transparent',
                       color: '#000',
@@ -251,7 +248,7 @@ function Home() {
                     }}>
                       {selectedRescanIds.has(job.id) && '✓'}
                     </div>
-                    
+
                     <div>{job.title}</div>
                   </div>
                   {job.ai_score != null && (
@@ -306,12 +303,12 @@ function Home() {
                     )}
                   </div>
                 </div>
-                
+
                 {/* Job Metadata Bar */}
                 {(selectedJob.job_posted_at || selectedJob.job_updated_at) && (
                   <div style={{ borderTop: '1px solid var(--border-color)', borderBottom: '1px solid var(--border-color)', padding: '0.8rem 0', marginBottom: '2rem', display: 'flex', gap: '2rem', color: 'var(--text-dim)', fontSize: '0.9rem' }}>
-                    {selectedJob.job_posted_at && <div><span style={{color: '#888'}}>POSTED:</span> {selectedJob.job_posted_at}</div>}
-                    {selectedJob.job_updated_at && <div><span style={{color: '#888'}}>UPDATED:</span> {selectedJob.job_updated_at}</div>}
+                    {selectedJob.job_posted_at && <div><span style={{ color: '#888' }}>POSTED:</span> {selectedJob.job_posted_at}</div>}
+                    {selectedJob.job_updated_at && <div><span style={{ color: '#888' }}>UPDATED:</span> {selectedJob.job_updated_at}</div>}
                   </div>
                 )}
 
@@ -321,48 +318,15 @@ function Home() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                       <h3 style={{ margin: 0, color: 'var(--text-main)', letterSpacing: '1px' }}>/// AI ANALYSIS</h3>
                       <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: selectedJob.ai_score >= 75 ? 'var(--text-main)' : selectedJob.ai_score >= 50 ? 'var(--accent)' : '#ff5555', textShadow: selectedJob.ai_score >= 75 ? 'var(--glow)' : 'none' }}>
-                        SCORE: {selectedJob.ai_score}/100
+                        SCORE: {selectedJob.ai_score}/5
                       </div>
                     </div>
 
-                    {selectedJob.ai_analysis.apply_decision && (
-                      <div style={{ marginBottom: '1.5rem', padding: '1rem', background: 'rgba(0,0,0,0.3)', borderLeft: '3px solid var(--text-main)', color: '#fff', fontStyle: 'italic', fontSize: '1.1rem' }}>
-                        "{selectedJob.ai_analysis.apply_decision}"
+                    {selectedJob.ai_analysis.reason && (
+                      <div style={{ padding: '1rem', background: 'rgba(0,0,0,0.3)', borderLeft: '3px solid var(--text-main)', color: '#fff', fontStyle: 'italic', fontSize: '1.1rem' }}>
+                        "{selectedJob.ai_analysis.reason}"
                       </div>
                     )}
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-                      <div style={{ border: '1px solid var(--border-color)', padding: '1.2rem', background: 'rgba(0,0,0,0.2)' }}>
-                        <strong style={{ color: 'var(--text-main)', display: 'block', marginBottom: '0.75rem', fontSize: '1.1rem' }}>[+] WORKING IN FAVOR:</strong>
-                        <ul style={{ paddingLeft: '1.2rem', margin: 0, fontSize: '1rem', color: '#ddd' }}>
-                          {selectedJob.ai_analysis.working_in_my_favor?.map((item: string, i: number) => item && <li key={i} style={{ marginBottom: '0.4rem' }}>{item}</li>)}
-                        </ul>
-                      </div>
-
-                      <div style={{ border: '1px solid var(--border-color)', padding: '1.2rem', background: 'rgba(0,0,0,0.2)' }}>
-                        <strong style={{ color: 'var(--accent)', display: 'block', marginBottom: '0.75rem', fontSize: '1.1rem' }}>[-] CRITICAL GAPS:</strong>
-                        <ul style={{ paddingLeft: '1.2rem', margin: 0, fontSize: '1rem', color: '#ddd' }}>
-                          {selectedJob.ai_analysis.critical_gaps?.map((item: string, i: number) => item && <li key={i} style={{ marginBottom: '0.4rem' }}>{item}</li>)}
-                        </ul>
-                      </div>
-                    </div>
-
-                    {selectedJob.ai_analysis.scores && (
-                      <div style={{ marginTop: '1.5rem' }}>
-                        <strong style={{ display: 'block', marginBottom: '0.75rem', color: 'var(--text-dim)', letterSpacing: '1px' }}>SCALAR BREAKDOWN:</strong>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
-                          {Object.entries(selectedJob.ai_analysis.scores).map(([key, data]: [string, any]) => {
-                            if (data?.score == null) return null;
-                            return (
-                              <div key={key} title={data.reason || ''} style={{ background: 'rgba(0,0,0,0.4)', padding: '0.5rem 0.8rem', fontSize: '0.9rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                <span style={{ color: 'var(--text-dim)' }}>{key}</span>: <span style={{ color: 'var(--text-main)', fontWeight: 'bold', marginLeft: '0.4rem', textShadow: 'var(--glow)' }}>{data.score}</span>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )}
-
                   </div>
                 ) : (
                   <div style={{ border: '1px dashed #555', padding: '1rem', marginBottom: '2.5rem', color: '#888', textAlign: 'center' }}>

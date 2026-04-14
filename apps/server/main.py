@@ -47,11 +47,8 @@ class JobStatus(str, Enum):
     IGNORED = "IGNORED"
 
 class AIAnalysisModel(BaseModel):
-    apply_decision: Optional[str] = None
-    scores: Optional[Dict[str, Any]] = None
-    working_in_my_favor: Optional[List[str]] = None
-    critical_gaps: Optional[List[str]] = None
-    missing_keywords: Optional[List[str]] = None
+    score: Optional[float] = None
+    reason: Optional[str] = None
 
 class JobResponse(BaseModel):
     id: str
@@ -369,16 +366,16 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
             ai_elapsed_fmt = _fmt_duration(ai_elapsed)
 
             if ai_result:
-                raw_score = ai_result.get("weighted_score")
+                raw_score = ai_result.get("score")
                 score = float(raw_score) if raw_score is not None else 0.0
 
                 job["ai_score"] = score
                 job["ai_analysis"] = ai_result
 
                 print(f"  -> AI Result retrieved for {title}. Score: {score} ({ai_elapsed_fmt})")
-                if score < 50:
+                if score < 2.5:
                     await manager.broadcast({"type": "job_update", "message": f"  -> REJECTED: {title} | Score: {score} | {ai_elapsed_fmt}"})
-                    return (job, "IGNORED", f"AI Score {score} < 50", ai_elapsed)
+                    return (job, "IGNORED", f"AI Score {score} < 2.5", ai_elapsed)
                 await manager.broadcast({"type": "job_update", "message": f"  -> PASSED: {title} | Score: {score} | {ai_elapsed_fmt}"})
                 return (job, "ACTIVE", None, ai_elapsed)
             else:
@@ -447,7 +444,7 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
         j_dict, j_stat, j_rsn = job_tuple
         jid = j_dict.get("source_id")
         if jid in evaluated_map:
-            ai_dict, ai_stat, ai_rsn, _elapsed = evaluated_map[jid]
+            ai_dict, ai_stat, ai_rsn = evaluated_map[jid]
             # Reattach the mutated scores
             j_dict["ai_score"] = ai_dict.get("ai_score")
             j_dict["ai_analysis"] = ai_dict.get("ai_analysis")
@@ -502,11 +499,11 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
         if job.get("ai_score") is not None:
             score = job["ai_score"]
             analysis = job.get("ai_analysis") or {}
-            decision = analysis.get("apply_decision", "N/A")
+            reason = analysis.get("reason", "N/A")
             log.append(_activity_event(
                 "AI_EVALUATED",
-                f"Score: {score} — {decision}",
-                {"score": score, "apply_decision": decision},
+                f"Score: {score} — {reason}",
+                {"score": score, "reason": reason},
             ))
 
         db_job = models.JobPosition(
@@ -555,11 +552,11 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
         if job.get("ai_score") is not None:
             score = job["ai_score"]
             analysis = job.get("ai_analysis") or {}
-            decision = analysis.get("apply_decision", "N/A")
+            reason = analysis.get("reason", "N/A")
             log.append(_activity_event(
                 "AI_EVALUATED",
-                f"Score: {score} — {decision}",
-                {"score": score, "apply_decision": decision},
+                f"Score: {score} — {reason}",
+                {"score": score, "reason": reason},
             ))
 
         db.query(models.JobPosition).filter(
