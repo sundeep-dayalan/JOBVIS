@@ -20,7 +20,7 @@ import os
 import models
 import database
 from llm_engine import LLMEngine
-from pipeline import JobPipeline
+from pipeline.pipeline import JobPipeline
 from mappers import linkedinDataMapper
 from scrapers.ashby import run_ashby_scan
 
@@ -127,6 +127,7 @@ async def startup_event():
     is_alive = await llm.check_health()
     if is_alive:
         print(f"[✔] LLM Engine online - {llm.provider} is responsive.")
+        await llm.preload_model()
     else:
         print(f"[X] CRITICAL: LLM Engine provider '{llm.provider}' at {llm.url} is DOWN or unreachable.")
         print("Halting FastAPI application startup as per strict config constraints.")
@@ -137,6 +138,7 @@ async def shutdown_event():
     if not _background_tasks:
         return
     print(f"[Server] Shutdown signal — cancelling {len(_background_tasks)} background task(s)...", flush=True)
+    await llm.release_model()
     for task in list(_background_tasks):
         task.cancel()
     await asyncio.gather(*list(_background_tasks), return_exceptions=True)
@@ -336,12 +338,10 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
         title = job.get('title', 'Unknown')
         company = job.get('company_name', 'Unknown')
         
-        # Inject all defined placeholders dynamically from the pre-baked template
-        system_prompt = base_system_prompt.replace("{{JOB_TITLE}}", title)
-        system_prompt = system_prompt.replace("{{JD_CONTENT}}", job.get('description') or '')
-        system_prompt = system_prompt.replace("{{JOB_LOCATION}}", job.get('location') or 'Unknown')
+        # Keeping system prompt completely static for caching
+        system_prompt = base_system_prompt
         
-        user_prompt = "Execute the analysis and return the strict JSON requested according to the detailed system instructions."
+        user_prompt = f"TITLE: {title}\nJD: {job.get('description') or ''}\nLOCATION: {job.get('location') or 'Unknown'}"
         
         try:
             print(f"Evaluating: {title}")

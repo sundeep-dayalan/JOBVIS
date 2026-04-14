@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 from typing import List, Dict, Any, Tuple
 import models
+from .filters.title import title_filter
+from .filters.job_description import job_description_filter
 
 class JobPipeline:
     def __init__(self, config_path: str = None):
@@ -17,31 +19,37 @@ class JobPipeline:
             print(f"Error loading {config_path}: {e}")
             self.filter_config = {}
 
-        title_filter = self.filter_config.get('title_filter', {})
-        self.includes = [i.lower() for i in title_filter.get('include_any', [])]
-        self.excludes = [e.lower() for e in title_filter.get('exclude_any', [])]
+        title_filter_config = self.filter_config.get('title_filter', {})
+        self.includes = [i.lower() for i in title_filter_config.get('include_any', [])]
+        self.excludes = [e.lower() for e in title_filter_config.get('exclude_any', [])]
+
+        desc_filter_config = self.filter_config.get('job_description_filter', {})
+        self.desc_includes = [i.lower() for i in desc_filter_config.get('include_any', [])]
+        self.desc_excludes = [e.lower() for e in desc_filter_config.get('exclude_any', [])]
 
     def apply_preliminary_filters(self, job: Dict[str, Any]) -> Tuple[str, str]:
-        """Runs the title against includes/excludes. Returns (status, ignore_reason)."""
+        """Runs preliminary filters. Returns (status, ignore_reason)."""
         print(f"Applying preliminary filters to job: {job.get('title')}")
-        title = job.get('title', '').lower()
-        status = "ACTIVE"
-        ignore_reason = None
+        title = job.get('title')
         
-        if self.includes:
-            matches_positive = [inc for inc in self.includes if inc in title]
-            if not matches_positive:
-                #This is where we filter out the jobs that are not relevant to us
-                status = "IGNORED"
-                ignore_reason = "Missing positive title keyword match."
-                print(f"Job {job.get('title')} ignored: {ignore_reason}")
-                
-        if self.excludes and status == "ACTIVE":
-            #This is where we filter out the jobs that are not relevant to us
-            matches_negative = [exc for exc in self.excludes if exc in title]
-            if matches_negative:
-                status = "IGNORED"
-                ignore_reason = f"Matched negative title keyword(s): {', '.join(matches_negative)}"
+        if not title:
+            print("Job missing title, skipping preliminary filter.")
+            return "ACTIVE", None
+            
+        title = title.lower()
+        status, ignore_reason = title_filter(title, self.includes, self.excludes)
+        
+        if status == "IGNORED":
+            print(f"Job {job.get('title')} ignored: {ignore_reason}")
+            return status, ignore_reason
+            
+        description = job.get('description')
+        if not description:
+            print("Job missing description, skipping description filter.")
+        else:
+            description = description.lower()
+            status, ignore_reason = job_description_filter(description, self.desc_includes, self.desc_excludes)
+            if status == "IGNORED":
                 print(f"Job {job.get('title')} ignored: {ignore_reason}")
                 
         return status, ignore_reason

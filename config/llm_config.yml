@@ -1,10 +1,10 @@
 llm-providers:
   # ── Ollama (local) ──────────────────────────────────────────────────────────
-  - provider: ollama
-    name: ollama-nemotron-local
-    model: nemotron-3-nano:4b
-    mode: local
-    url: http://localhost:11434
+  # - provider: ollama
+  #   name: ollama-nemotron-local
+  #   model: nemotron-3-nano:4b
+  #   mode: local
+  #   url: http://localhost:11434
 
   # ── Ollama (local) ──────────────────────────────────────────────────────────
   - provider: ollama
@@ -12,6 +12,7 @@ llm-providers:
     model: qwen2.5:latest
     mode: local
     url: http://localhost:11434
+    keep_alive: "1h"
 
   # ── Ollama (local) ──────────────────────────────────────────────────────────
   # - provider: ollama

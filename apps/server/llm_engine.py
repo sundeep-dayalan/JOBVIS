@@ -14,6 +14,7 @@ class LLMEngine:
         self.model = self.config.get("model", self.config.get("name"))
         self.mode = self.config.get("mode", "local")
         self.url = self.config.get("url")
+        self.keep_alive = self.config.get("keep_alive", "5m") # Defaulting to 5m if not provided
 
         # Load the right API key based on active provider
         self.api_key = {
@@ -91,6 +92,46 @@ class LLMEngine:
                 response = await client.get(self.url)
                 return response.status_code == 200
         except Exception:
+            return False
+
+    async def preload_model(self) -> bool:
+        """Loads the Ollama model into memory and keeps it alive according to config."""
+        if self.provider != "ollama":
+            return True
+        print(f"[LLM Engine] Preloading '{self.model}' into memory for {self.keep_alive}...")
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    f"{self.url}/api/generate",
+                    json={"model": self.model, "keep_alive": self.keep_alive}
+                )
+                if resp.status_code == 200:
+                    print(f"[✔] '{self.model}' preloaded successfully.")
+                    return True
+                print(f"[X] Failed to preload '{self.model}'. Status: {resp.status_code}")
+                return False
+        except Exception as e:
+            print(f"[X] Network error while preloading '{self.model}': {e}")
+            return False
+
+    async def release_model(self) -> bool:
+        """Unloads the Ollama model from memory."""
+        if self.provider != "ollama":
+            return True
+        print(f"[LLM Engine] Unloading '{self.model}' from memory...")
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(
+                    f"{self.url}/api/generate",
+                    json={"model": self.model, "keep_alive": 0}
+                )
+                if resp.status_code == 200:
+                    print(f"[✔] '{self.model}' released successfully.")
+                    return True
+                print(f"[X] Failed to release '{self.model}'. Status: {resp.status_code}")
+                return False
+        except Exception as e:
+            print(f"[X] Network error while releasing '{self.model}': {e}")
             return False
 
     async def evaluate_job_match(self, system_prompt: str, user_prompt: str, max_retries: int = 3, client: httpx.AsyncClient = None) -> dict:
@@ -191,7 +232,9 @@ class LLMEngine:
                     "model": self.model,
                     "messages": messages,
                     "stream": False,
-                    "format": "json"
+                    "format": "json",
+                    "options": {"temperature": 0.0},
+                    "keep_alive": self.keep_alive
                 }
                 
                 try:

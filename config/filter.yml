@@ -62,6 +62,29 @@ title_filter:
     - "director"
     - "Camera"
 
+job_description_filter:
+  include_any:
+    - "Java"
+    - "Spring"
+    - "Spring Boot"
+    - "Kafka"
+    - "DynamoDB"
+    - "AWS"
+    - "Docker"
+    - "Kubernetes"
+    - "Maven"
+    - "IntelliJ"
+  exclude_any:
+    - "sponsorship"
+    - "citizen"
+    - "OPT"
+    - "Secret clearance"
+    - "Top Secret"
+    - "TS/SCI"
+    - "DoD clearance"
+    - "US citizenship required"
+    
+    
 
 location_filter:
   include_any:

@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 
 import httpx
-from pipeline import JobPipeline
+from pipeline.pipeline import JobPipeline
 
 # Shared pipeline instance for title pre-filtering (reads filter.yml once at startup)
 _pipeline = JobPipeline()
