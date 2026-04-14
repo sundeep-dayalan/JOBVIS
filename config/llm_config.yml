@@ -1,0 +1,35 @@
+llm-providers:
+  # ── Ollama (local) ──────────────────────────────────────────────────────────
+  - provider: ollama
+    name: ollama-nemotron-local
+    model: nemotron-3-nano:4b
+    mode: local
+    url: http://localhost:11434
+
+  # ── Ollama (local) ──────────────────────────────────────────────────────────
+  - provider: ollama
+    name: ollama-qwen2.5-local
+    model: qwen2.5:latest
+    mode: local
+    url: http://localhost:11434
+
+  # ── Ollama (local) ──────────────────────────────────────────────────────────
+  # - provider: ollama
+  #   name: ollama-llama3.2-3b-local
+  #   model: llama3.2:3b
+  #   mode: local
+  #   url: http://localhost:11434
+
+  # ── Gemini (cloud) — requires GEMINI_API_KEY in .env ────────────────────────
+  # - provider: gemini
+  #   name: gemini-free-tier-flash-lite
+  #   model: gemini-3.1-flash-lite-preview
+  #   mode: cloud
+  #   concurrency: 3
+
+  # ── Groq (cloud) — requires GROQ_API_KEY in .env ────────────────────────────
+  # - provider: groq
+  #   name: groq-llama-instant
+  #   model: llama-3.1-8b-instant
+  #   mode: cloud
+  #   concurrency: 1   # Groq free tier throttles hard — keep at 1

@@ -1,0 +1,82 @@
+title_filter:
+  include_any:
+    - "Software Engineer"
+    - "Backend"
+    - "Full Stack"
+    - "Distributed Systems"
+    - "Fintech"
+    - "Software Development Engineer"
+    - "AI"
+    - "ML"
+    - "LLM"
+    - "Agent"
+    - "Agentic"
+    - "GenAI"
+    - "Generative AI"
+    - "NLP"
+    - "LLMOps"
+    - "MLOps"
+    - "Voice AI"
+    - "Conversational AI"
+    - "Speech"
+    - "Platform Engineer"
+    - "Solutions Architect"
+    - "Solutions Engineer"
+    - "Forward Deployed"
+    - "Deployed Engineer"
+    - "Customer Engineer"
+    - "Integration Engineer"
+    - "Go"
+  exclude_any:
+    - "Junior"
+    - "Intern"
+    - "Entry Level"
+    - "Graduate"
+    - ".NET"
+    - "C#"
+    - "iOS"
+    - "Android"
+    - "Mobile"
+    - "PHP"
+    - "Ruby"
+    - "Embedded"
+    - "Firmware"
+    - "FPGA"
+    - "ASIC"
+    - "Blockchain"
+    - "Web3"
+    - "Crypto"
+    - "Salesforce"
+    - "SAP"
+    - "Oracle EBS"
+    - "Mainframe"
+    - "COBOL"
+    - "Spain"
+    - "Germany"
+    - "France"
+    - "Mexico"
+    - "EU"
+    - "German"
+    - "India"
+    - "manager"
+    - "director"
+    - "Camera"
+
+
+location_filter:
+  include_any:
+    - remote
+    - washington
+    - seattle
+    - Bellevue
+    - Redmond
+    - Kirkland
+    - WA
+
+linkedin-filter:
+  ignore_easy_apply: true
+  
+experience_filter:
+  min_years: 3
+  max_years: 6
+  require_explicit_match: false

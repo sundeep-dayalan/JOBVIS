@@ -1,0 +1,14 @@
+{
+  "name": "jobvis-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:ui": "echo 'TODO: start UI app'",
+    "dev:extension": "echo 'Load Chrome extension from apps/extension'",
+    "lint": "echo 'TODO: add lint pipeline'"
+  }
+}

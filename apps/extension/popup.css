@@ -1,0 +1,244 @@
+/* ── Reset ──────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --source-color: #0a66c2;
+}
+
+/* ── Base ───────────────────────────────────────────────────── */
+body {
+  width: 360px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #0f0f1a;
+  color: #d8d8ec;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+.header {
+  background: linear-gradient(135deg, #14133a 0%, #0d0d26 100%);
+  padding: 14px 18px;
+  text-align: center;
+  border-bottom: 1px solid #1e1e40;
+}
+.logo {
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 4px;
+  color: #fff;
+}
+.subtitle {
+  font-size: 10px;
+  color: rgba(255,255,255,0.5);
+  margin-top: 2px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+/* ── Source bar ─────────────────────────────────────────────── */
+.source-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  background: #0d0d20;
+  border-bottom: 1px solid #1e1e34;
+  font-size: 11px;
+  color: #8888aa;
+}
+.source-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #444466;
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+
+/* ── Section ────────────────────────────────────────────────── */
+.section {
+  padding: 12px 16px;
+  border-bottom: 1px solid #1e1e34;
+}
+
+/* ── Config rows ────────────────────────────────────────────── */
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.row:last-child { margin-bottom: 0; }
+
+label {
+  color: #8888aa;
+  font-size: 12px;
+}
+
+input[type="number"] {
+  width: 90px;
+  padding: 5px 8px;
+  background: #1e1e34;
+  border: 1px solid #2e2e50;
+  border-radius: 5px;
+  color: #d8d8ec;
+  font-size: 13px;
+  text-align: center;
+  transition: border-color 0.15s;
+}
+input[type="number"]:focus {
+  outline: none;
+  border-color: #0a66c2;
+}
+input:disabled { opacity: 0.45; }
+
+/* ── Controls ───────────────────────────────────────────────── */
+.controls {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #1e1e34;
+}
+
+/* ── Buttons ────────────────────────────────────────────────── */
+.btn {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.btn:not(:disabled):hover  { opacity: 0.85; }
+.btn:not(:disabled):active { transform: scale(0.97); }
+.btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.btn.primary  { background: #0a66c2; color: #fff; }
+.btn.danger   { background: #b52d2d; color: #fff; }
+.btn.secondary {
+  background: #1e2a3a;
+  color: #7ab4f0;
+  border: 1px solid #2a3d55;
+}
+.btn.ghost {
+  background: transparent;
+  color: #55556a;
+  border: 1px solid #1e1e34;
+  font-size: 11px;
+}
+.btn.full-width { width: 100%; flex: none; }
+
+/* ── Status section ─────────────────────────────────────────── */
+.status-section {
+  padding: 12px 16px;
+  border-bottom: 1px solid #1e1e34;
+}
+
+.phase-pill {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  padding: 2px 9px;
+  border-radius: 20px;
+  background: #0a66c2;
+  color: #fff;
+  margin-bottom: 8px;
+  transition: background 0.3s;
+}
+.phase-pill.phase2 { background: #00897b; }
+.phase-pill.ashby  { background: #6c63ff; }
+
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+.status-badge.idle     { background: #1e1e34; color: #6666aa; }
+.status-badge.starting { background: #1a3a1a; color: #66bb6a; }
+.status-badge.running  { background: #1a3a1a; color: #4caf50; }
+.status-badge.stopped  { background: #3a2a10; color: #ffa726; }
+.status-badge.complete { background: #102a3a; color: #29b6f6; }
+.status-badge.error    { background: #3a1010; color: #ef5350; }
+
+.started-at {
+  font-size: 10px;
+  color: #44445a;
+}
+
+/* ── Stats ──────────────────────────────────────────────────── */
+.stats {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.stat {
+  flex: 1;
+  background: #1a1a2e;
+  border: 1px solid #1e1e34;
+  border-radius: 6px;
+  padding: 7px 6px;
+  text-align: center;
+}
+.stat-label {
+  display: block;
+  font-size: 9px;
+  color: #55556a;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 3px;
+}
+.stat-value {
+  display: block;
+  font-size: 18px;
+  font-weight: 700;
+  color: #8888cc;
+}
+.stat-value.highlight { color: #29b6f6; }
+
+/* ── Progress bar ───────────────────────────────────────────── */
+.progress-bar {
+  height: 3px;
+  background: #1e1e34;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #0a66c2, #29b6f6);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+/* ── Output section ─────────────────────────────────────────── */
+.output-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #1e1e34;
+}
+
+/* ── Message ────────────────────────────────────────────────── */
+.message {
+  padding: 8px 16px;
+  font-size: 11px;
+  color: #4caf50;
+  min-height: 28px;
+  text-align: center;
+  transition: color 0.2s;
+}
