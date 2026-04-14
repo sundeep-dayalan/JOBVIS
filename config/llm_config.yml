@@ -7,22 +7,22 @@ llm-providers:
   #   url: http://localhost:11434
 
   # ── Ollama (local) ──────────────────────────────────────────────────────────
-  - provider: ollama
-    name: ollama-qwen2.5-local
-    model: qwen2.5:latest
-    mode: local
-    url: http://localhost:11434
-    keep_alive: "1h"
-    # num_ctx: context window in tokens. Default Ollama is 2048 — too small for CV+JD prompts.
-    # 8192 covers a large CV + stripped JD comfortably. Reduce if you run out of VRAM.
-    num_ctx: 8192
-    # num_predict: max output tokens to generate.
-    # Your scorecard has 10 scored dimensions with reason strings + 5 cv_improvements + lists.
-    # Budget: ~1500-2000 tokens. Set 2048 to give headroom without runaway generation risk.
-    num_predict: 2048
-    # concurrency: must match OLLAMA_NUM_PARALLEL on your Ollama server. Do not exceed it.
-    # 48GB RAM + qwen2.5 (4.7GB) + num_ctx=8192 → ~1.5GB KV cache/slot → 4 slots is safe and fast.
-    concurrency: 2
+  # - provider: ollama
+  #   name: ollama-qwen2.5-local
+  #   model: qwen2.5:latest
+  #   mode: local
+  #   url: http://localhost:11434
+  #   keep_alive: "1h"
+  #   # num_ctx: context window in tokens. Default Ollama is 2048 — too small for CV+JD prompts.
+  #   # 8192 covers a large CV + stripped JD comfortably. Reduce if you run out of VRAM.
+  #   num_ctx: 8192
+  #   # num_predict: max output tokens to generate.
+  #   # Your scorecard has 10 scored dimensions with reason strings + 5 cv_improvements + lists.
+  #   # Budget: ~1500-2000 tokens. Set 2048 to give headroom without runaway generation risk.
+  #   num_predict: 2048
+  #   # concurrency: must match OLLAMA_NUM_PARALLEL on your Ollama server. Do not exceed it.
+  #   # 48GB RAM + qwen2.5 (4.7GB) + num_ctx=8192 → ~1.5GB KV cache/slot → 4 slots is safe and fast.
+  #   concurrency: 2
 
   # ── Ollama (local) ──────────────────────────────────────────────────────────
   # - provider: ollama
@@ -30,6 +30,28 @@ llm-providers:
   #   model: llama3.2:3b
   #   mode: local
   #   url: http://localhost:11434
+
+  # ── Apple MLX (local, Apple Silicon) ────────────────────────────────────────
+  # 2-4x faster than Ollama on M-series chips due to unified memory architecture.
+  # No OLLAMA_NUM_PARALLEL equivalent needed — MLX handles concurrency natively.
+  #
+  # Setup (one time):
+  #   pip install mlx-lm
+  #
+  # Start the server (keep running in background):
+  #   mlx_lm.server --model mlx-community/Qwen2.5-7B-Instruct-4bit --port 8080
+  #
+  # Other fast MLX models to try (all 4-bit quantized, good quality/speed tradeoff):
+  #   mlx-community/Qwen2.5-14B-Instruct-4bit   (better quality, ~2x slower)
+  #   mlx-community/Llama-3.2-3B-Instruct-4bit  (fastest, lower quality)
+  #
+  - provider: mlx
+    name: mlx-qwen2.5-7b-local
+    model: mlx-community/Qwen2.5-7B-Instruct-4bit
+    mode: local
+    url: http://localhost:8080
+    num_predict: 4096
+    concurrency: 2   # MLX handles this natively, no server-side config needed
 
   # ── Gemini (cloud) — requires GEMINI_API_KEY in .env ────────────────────────
   # - provider: gemini

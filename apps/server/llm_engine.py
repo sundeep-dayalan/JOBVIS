@@ -31,9 +31,9 @@ class LLMEngine:
 
         # Ollama inference limits — cap token budget to prevent runaway generation.
         # num_ctx: context window size (default Ollama: 2048 — often too small for CV+JD prompts).
-        # num_predict: max tokens to generate. Scorecard JSON needs ~1500-2000 tokens; 2048 gives headroom.
+        # num_predict: max tokens to generate. Scorecard has ~2500-3000 tokens; 4096 gives safe headroom.
         self.num_ctx = int(self.config.get("num_ctx", 8192))
-        self.num_predict = int(self.config.get("num_predict", 2048))
+        self.num_predict = int(self.config.get("num_predict", 4096))
 
         if not self.provider or not self.model:
             raise ValueError("CRITICAL: No active LLM provider or model found in llm_config.yml! Refusing to start.")
@@ -94,6 +94,19 @@ class LLMEngine:
                 print(f"Groq Network Error: {e}")
                 return False
 
+        # MLX local server — hits /v1/models (OpenAI-compatible)
+        if self.provider == "mlx":
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    resp = await client.get(f"{self.url}/v1/models")
+                    if resp.status_code == 200:
+                        return True
+                    print(f"MLX Health Check Failed: {resp.status_code}")
+                    return False
+            except Exception as e:
+                print(f"MLX Network Error: {e}")
+                return False
+
         # Ollama
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
@@ -150,8 +163,10 @@ class LLMEngine:
             return await self._evaluate_ollama(system_prompt, user_prompt, max_retries, client)
         elif self.provider == "groq":
             return await self._evaluate_groq(system_prompt, user_prompt, max_retries, client)
+        elif self.provider == "mlx":
+            return await self._evaluate_mlx(system_prompt, user_prompt, max_retries, client)
         else:
-            raise NotImplementedError(f"Provider '{self.provider}' is not supported. Use: gemini, ollama, groq.")
+            raise NotImplementedError(f"Provider '{self.provider}' is not supported. Use: gemini, ollama, groq, mlx.")
             
     async def _evaluate_gemini(self, system_prompt: str, user_prompt: str, max_retries: int, client: httpx.AsyncClient = None) -> dict:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
@@ -338,6 +353,85 @@ class LLMEngine:
                         })
                 except Exception as e:
                     print(f"  [Attempt {attempt+1}] Groq Evaluation Error: {e}")
+                    await asyncio.sleep(2)
+
+            return None
+        finally:
+            if should_close:
+                await client.aclose()
+
+    async def _evaluate_mlx(self, system_prompt: str, user_prompt: str, max_retries: int, client: httpx.AsyncClient = None) -> dict:
+        """
+        Calls a local mlx-lm server (OpenAI-compatible).
+        Start the server with:
+          mlx_lm.server --model mlx-community/Qwen2.5-7B-Instruct-4bit --port 8080
+        No API key required. Handles concurrency natively — no OLLAMA_NUM_PARALLEL equivalent needed.
+        """
+        url = f"{self.url}/v1/chat/completions"
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_prompt},
+        ]
+
+        should_close = False
+        if client is None:
+            client = httpx.AsyncClient(timeout=120.0)
+            should_close = True
+
+        # Fresh messages for clean retries (never grows with truncated history)
+        base_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_prompt},
+        ]
+
+        try:
+            for attempt in range(max_retries):
+                payload = {
+                    "model": self.model,
+                    "messages": messages,
+                    "max_tokens": self.num_predict,  # scorecard needs ~2500-3000 tokens; set 4096 in config
+                    "temperature": 0.0,
+                    "response_format": {"type": "json_object"},  # JSON mode (mlx-lm >= 0.18)
+                }
+                try:
+                    response = await client.post(url, json=payload)
+                    response.raise_for_status()
+                    data = response.json()
+
+                    if not data.get("choices"):
+                        raise ValueError(f"No choices returned from MLX server: {data}")
+
+                    choice = data["choices"][0]
+                    ai_reply = choice["message"]["content"]
+                    finish_reason = choice.get("finish_reason", "stop")
+
+                    # Truncation detected — appending the broken response to history would waste
+                    # context on retry and fail at the same point. Reset to base messages instead.
+                    if finish_reason == "length":
+                        print(f"  [Attempt {attempt+1}] MLX truncated output (finish_reason=length). "
+                              f"Retrying clean — increase num_predict in llm_config.yml if this persists.")
+                        messages = list(base_messages)
+                        continue
+
+                    messages.append({"role": "assistant", "content": ai_reply})
+
+                    try:
+                        cleaned = ai_reply.strip()
+                        if cleaned.startswith("```json"):
+                            cleaned = cleaned[7:]
+                        elif cleaned.startswith("```"):
+                            cleaned = cleaned[3:]
+                        if cleaned.endswith("```"):
+                            cleaned = cleaned[:-3]
+                        return json.loads(cleaned.strip())
+                    except json.JSONDecodeError:
+                        print(f"  [Attempt {attempt+1}] Invalid JSON from MLX. Raw: {ai_reply[:200]}...")
+                        messages.append({
+                            "role": "user",
+                            "content": "You did not return valid JSON. Please return STRICTLY valid JSON according to the schema. No markdown wrapping.",
+                        })
+                except Exception as e:
+                    print(f"  [Attempt {attempt+1}] MLX Evaluation Error: {e}")
                     await asyncio.sleep(2)
 
             return None

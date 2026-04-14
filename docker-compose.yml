@@ -24,61 +24,60 @@ services:
       - "9080:8080"
     depends_on:
       - db
+  # redis:
+  #   image: redis:alpine
+  #   container_name: firecrawl_redis
+  #   restart: always
+  #   ports:
+  #     - "9379:6379"
 
-  redis:
-    image: redis:alpine
-    container_name: firecrawl_redis
-    restart: always
-    ports:
-      - "9379:6379"
+  # playwright-service:
+  #   image: ghcr.io/firecrawl/playwright-service:latest
+  #   container_name: firecrawl_playwright
+  #   restart: always
+  #   environment:
+  #     - PORT=3000
+  #   ports:
+  #     - "9000:3000"
 
-  playwright-service:
-    image: ghcr.io/firecrawl/playwright-service:latest
-    container_name: firecrawl_playwright
-    restart: always
-    environment:
-      - PORT=3000
-    ports:
-      - "9000:3000"
+  # firecrawl:
+  #   image: ghcr.io/firecrawl/firecrawl:latest
+  #   container_name: firecrawl_api
+  #   restart: always
+  #   ports:
+  #     - "9002:3002"
+  #   environment:
+  #     - REDIS_URL=redis://redis:6379
+  #     - REDIS_RATE_LIMIT_URL=redis://redis:6379
+  #     - PLAYWRIGHT_MICROSERVICE_URL=http://playwright-service:3000/scrape
+  #     - NUQ_RABBITMQ_URL=amqp://firecrawl_rabbitmq:5672
+  #     - POSTGRES_USER=postgres
+  #     - POSTGRES_PASSWORD=postgres
+  #     - POSTGRES_DB=postgres
+  #     - POSTGRES_HOST=firecrawl_postgres
+  #     - POSTGRES_PORT=5432
+  #     - USE_DB_AUTHENTICATION=false
+  #   depends_on:
+  #     - redis
+  #     - playwright-service
+  #     - firecrawl_postgres
+  #     - firecrawl_rabbitmq
 
-  firecrawl:
-    image: ghcr.io/firecrawl/firecrawl:latest
-    container_name: firecrawl_api
-    restart: always
-    ports:
-      - "9002:3002"
-    environment:
-      - REDIS_URL=redis://redis:6379
-      - REDIS_RATE_LIMIT_URL=redis://redis:6379
-      - PLAYWRIGHT_MICROSERVICE_URL=http://playwright-service:3000/scrape
-      - NUQ_RABBITMQ_URL=amqp://firecrawl_rabbitmq:5672
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=postgres
-      - POSTGRES_HOST=firecrawl_postgres
-      - POSTGRES_PORT=5432
-      - USE_DB_AUTHENTICATION=false
-    depends_on:
-      - redis
-      - playwright-service
-      - firecrawl_postgres
-      - firecrawl_rabbitmq
+  # firecrawl_postgres:
+  #   image: ghcr.io/firecrawl/nuq-postgres:latest
+  #   container_name: firecrawl_postgres
+  #   restart: always
+  #   environment:
+  #     - POSTGRES_USER=postgres
+  #     - POSTGRES_PASSWORD=postgres
+  #     - POSTGRES_DB=postgres
+  #   ports:
+  #     - "9432:5432"
 
-  firecrawl_postgres:
-    image: ghcr.io/firecrawl/nuq-postgres:latest
-    container_name: firecrawl_postgres
-    restart: always
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=postgres
-    ports:
-      - "9432:5432"
-
-  firecrawl_rabbitmq:
-    image: rabbitmq:3-management
-    container_name: firecrawl_rabbitmq
-    restart: always
-    ports:
-      - "9672:5672"
-      - "19567:15672"
+  # firecrawl_rabbitmq:
+  #   image: rabbitmq:3-management
+  #   container_name: firecrawl_rabbitmq
+  #   restart: always
+  #   ports:
+  #     - "9672:5672"
+  #     - "19567:15672"
