@@ -4,13 +4,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 from typing import List, Dict, Any, Tuple
 import models
-from .filters.title import title_filter
-from .filters.job_description import job_description_filter
+from .preprocessors.title_filter import title_filter
+from .preprocessors.jd_filter import job_description_filter
 
 class JobPipeline:
     def __init__(self, config_path: str = None):
         if not config_path:
-            config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../config/filter.yml'))
+            config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../config/filter.yml'))
             
         try:
             with open(config_path, 'r') as f:

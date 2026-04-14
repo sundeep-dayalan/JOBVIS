@@ -23,6 +23,7 @@ from llm_engine import LLMEngine
 from pipeline.pipeline import JobPipeline
 from mappers import linkedinDataMapper
 from scrapers.ashby import run_ashby_scan
+from pipeline.preprocessors.jd_stripper import strip_jd
 
 # Initialize the global engines
 llm = LLMEngine()
@@ -341,7 +342,8 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
         # Keeping system prompt completely static for caching
         system_prompt = base_system_prompt
         
-        user_prompt = f"TITLE: {title}\nJD: {job.get('description') or ''}\nLOCATION: {job.get('location') or 'Unknown'}"
+        stripped_jd = strip_jd(job.get('description') or '')
+        user_prompt = f"TITLE: {title}\nJD: {stripped_jd}\nLOCATION: {job.get('location') or 'Unknown'}"
         
         try:
             print(f"Evaluating: {title}")

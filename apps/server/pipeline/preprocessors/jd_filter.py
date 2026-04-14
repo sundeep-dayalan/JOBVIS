@@ -1,4 +1,5 @@
 from typing import Tuple, List
+import re
 
 def job_description_filter(description: str, includes: List[str], excludes: List[str]) -> Tuple[str, str]:
     status = "ACTIVE"
