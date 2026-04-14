@@ -1,3 +1,4 @@
+import asyncio
 import yaml
 import os
 import httpx
@@ -14,7 +15,7 @@ class LLMEngine:
         self.model = self.config.get("model", self.config.get("name"))
         self.mode = self.config.get("mode", "local")
         self.url = self.config.get("url")
-        self.keep_alive = self.config.get("keep_alive", "5m") # Defaulting to 5m if not provided
+        self.keep_alive = self.config.get("keep_alive", "5m")
 
         # Load the right API key based on active provider
         self.api_key = {
@@ -24,8 +25,15 @@ class LLMEngine:
 
         # Max concurrent evaluations — providers can declare this in llm_config.yml.
         # Defaults: 3 for cloud (Gemini), 1 for local (Ollama / rate-limited free tiers).
+        # Increase local concurrency only if OLLAMA_NUM_PARALLEL is set on your Ollama server.
         default_concurrency = 3 if self.mode == "cloud" else 1
         self.concurrency = int(self.config.get("concurrency", default_concurrency))
+
+        # Ollama inference limits — cap token budget to prevent runaway generation.
+        # num_ctx: context window size (default Ollama: 2048 — often too small for CV+JD prompts).
+        # num_predict: max tokens to generate. Scorecard JSON needs ~1500-2000 tokens; 2048 gives headroom.
+        self.num_ctx = int(self.config.get("num_ctx", 8192))
+        self.num_predict = int(self.config.get("num_predict", 2048))
 
         if not self.provider or not self.model:
             raise ValueError("CRITICAL: No active LLM provider or model found in llm_config.yml! Refusing to start.")
@@ -205,7 +213,6 @@ class LLMEngine:
                         })
                 except Exception as e:
                     print(f"  [Attempt {attempt+1}] Gemini API Evaluation Error: {e}")
-                    import asyncio
                     await asyncio.sleep(2)
             
             return None
@@ -233,7 +240,11 @@ class LLMEngine:
                     "messages": messages,
                     "stream": False,
                     "format": "json",
-                    "options": {"temperature": 0.0},
+                    "options": {
+                        "temperature": 0.0,
+                        "num_ctx": self.num_ctx,       # context window — set > 2048 for CV+JD prompts
+                        "num_predict": self.num_predict, # cap output tokens to avoid runaway generation
+                    },
                     "keep_alive": self.keep_alive
                 }
                 
@@ -257,8 +268,7 @@ class LLMEngine:
                         })
                 except Exception as e:
                     print(f"  [Attempt {attempt+1}] LLM Chat Evaluation Error: {e}")
-                    import asyncio
-                    await asyncio.sleep(2) # brief delay
+                    await asyncio.sleep(2)
                     
             return None # Returning null if all 3 retries crash / fail
         finally:
@@ -328,7 +338,6 @@ class LLMEngine:
                         })
                 except Exception as e:
                     print(f"  [Attempt {attempt+1}] Groq Evaluation Error: {e}")
-                    import asyncio
                     await asyncio.sleep(2)
 
             return None

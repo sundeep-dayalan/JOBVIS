@@ -1,4 +1,5 @@
 import time
+import uuid
 import os as exit_os
 import json
 import asyncio
@@ -121,7 +122,7 @@ async def startup_event():
             break
         except Exception as e:
             print(f"Database not ready yet, waiting 3 seconds... ({retries} retries left)")
-            time.sleep(3)
+            await asyncio.sleep(3)
             retries -= 1
 
     print(f"\nChecking LLM Engine Health ({llm.provider}: {llm.model})...")
@@ -282,6 +283,19 @@ async def scrape_ashby(request: AshbyScrapeRequest):
 
 # ─── Activity Log Helper ──────────────────────────────────────────────────────
 
+def _fmt_duration(seconds: float) -> str:
+    """Converts seconds to a human-readable string like 1m2s or 45s."""
+    seconds = int(seconds)
+    if seconds >= 3600:
+        h, rem = divmod(seconds, 3600)
+        m, s = divmod(rem, 60)
+        return f"{h}h{m}m{s}s"
+    if seconds >= 60:
+        m, s = divmod(seconds, 60)
+        return f"{m}m{s}s"
+    return f"{seconds}s"
+
+
 def _activity_event(event: str, summary: str, detail: dict = None) -> dict:
     """Creates one structured entry for a job's activity_log."""
     return {
@@ -348,70 +362,92 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
         try:
             print(f"Evaluating: {title}")
             await manager.broadcast({"type": "job_update", "message": f"EVALUATING: {title} | {company}"})
-            
+
             ai_start = time.time()
             ai_result = await llm.evaluate_job_match(system_prompt=system_prompt, user_prompt=user_prompt, client=client)
             ai_elapsed = round(time.time() - ai_start, 2)
-            
+            ai_elapsed_fmt = _fmt_duration(ai_elapsed)
+
             if ai_result:
                 raw_score = ai_result.get("weighted_score")
                 score = float(raw_score) if raw_score is not None else 0.0
-                
+
                 job["ai_score"] = score
                 job["ai_analysis"] = ai_result
-                
-                print(f"  -> AI Result retrieved for {title}. Score: {score}")
+
+                print(f"  -> AI Result retrieved for {title}. Score: {score} ({ai_elapsed_fmt})")
                 if score < 50:
-                    await manager.broadcast({"type": "job_update", "message": f"  -> REJECTED: {title} | Score: {score} | {ai_elapsed}s"})
-                    return (job, "IGNORED", f"AI Score {score} < 50")
-                await manager.broadcast({"type": "job_update", "message": f"  -> PASSED: {title} | Score: {score} | {ai_elapsed}s"})
-                return (job, "ACTIVE", None)
+                    await manager.broadcast({"type": "job_update", "message": f"  -> REJECTED: {title} | Score: {score} | {ai_elapsed_fmt}"})
+                    return (job, "IGNORED", f"AI Score {score} < 50", ai_elapsed)
+                await manager.broadcast({"type": "job_update", "message": f"  -> PASSED: {title} | Score: {score} | {ai_elapsed_fmt}"})
+                return (job, "ACTIVE", None, ai_elapsed)
             else:
-                print(f"Failed to get JSON from AI for {title} after retries.")
-                await manager.broadcast({"type": "job_update", "message": f"  -> FAILED: {title} | Format error limit reached."})
+                print(f"Failed to get JSON from AI for {title} after retries. ({ai_elapsed_fmt})")
+                await manager.broadcast({"type": "job_update", "message": f"  -> FAILED: {title} | Format error limit reached. | {ai_elapsed_fmt}"})
                 job["ai_score"] = None
                 job["ai_analysis"] = {"error": "AI returned invalid format after 3 retries."}
-                return (job, "ACTIVE", None)
+                return (job, "ACTIVE", None, ai_elapsed)
         except Exception as e:
+            ai_elapsed = round(time.time() - ai_start, 2)
             print(f"Error communicating with AI for {title}: {e}")
             await manager.broadcast({"type": "job_update", "message": f"  -> CRASH: {title} | Connectivity error."})
             job["ai_score"] = None
             job["ai_analysis"] = {"error": str(e)}
-            return (job, "ACTIVE", None)
+            return (job, "ACTIVE", None, ai_elapsed)
 
     processed_jobs = []
-    
-    if llm.mode == "cloud":
-        print(f"Running {len(jobs_to_evaluate)} evaluations concurrently (Cloud Mode) [concurrency={llm.concurrency}]")
-        
-        # Concurrency limit read from llm_config.yml — avoids 429s on rate-limited providers (e.g. Groq free tier)
-        semaphore = asyncio.Semaphore(llm.concurrency)
-        
-        async with httpx.AsyncClient(timeout=120.0) as http_client:
-            async def evaluate_with_limit(job):
-                async with semaphore:
-                    return await evaluate_single_job(job, client=http_client)
-                    
-            tasks = [evaluate_with_limit(job) for job in jobs_to_evaluate]
-            results = await asyncio.gather(*tasks)
-            processed_jobs.extend(results)
-    else:
-        print(f"Running {len(jobs_to_evaluate)} evaluations sequentially (Local Mode)")
-        async with httpx.AsyncClient(timeout=120.0) as http_client:
-            for job in jobs_to_evaluate:
-                result = await evaluate_single_job(job, client=http_client)
-                processed_jobs.append(result)
-    
+
+    # Unified concurrency path for both local and cloud modes.
+    # Local Ollama defaults to concurrency=1 (sequential). Set concurrency > 1 in
+    # llm_config.yml only if OLLAMA_NUM_PARALLEL is configured on your Ollama server.
+    concurrency_label = f"concurrency={llm.concurrency}" if llm.concurrency > 1 else "sequential"
+    print(f"Running {len(jobs_to_evaluate)} evaluations [{llm.mode} mode | {concurrency_label}]")
+
+    semaphore = asyncio.Semaphore(llm.concurrency)
+
+    async with httpx.AsyncClient(timeout=120.0) as http_client:
+        async def evaluate_with_limit(job):
+            async with semaphore:
+                return await evaluate_single_job(job, client=http_client)
+
+        tasks = [evaluate_with_limit(job) for job in jobs_to_evaluate]
+        results = await asyncio.gather(*tasks)
+        processed_jobs.extend(results)
+
+    # --- TIMING STATS ---
+    if processed_jobs:
+        job_times = [(job.get("title", "Unknown"), elapsed) for job, _s, _r, elapsed in processed_jobs]
+        slowest  = max(job_times, key=lambda x: x[1])
+        fastest  = min(job_times, key=lambda x: x[1])
+        avg_time = sum(t for _, t in job_times) / len(job_times)
+
+        stats_lines = [
+            f"{'─' * 50}",
+            f"  AI EVALUATION STATS  ({len(processed_jobs)} jobs)",
+            f"{'─' * 50}",
+            f"  Slowest : {_fmt_duration(slowest[1])}  — {slowest[0]}",
+            f"  Fastest : {_fmt_duration(fastest[1])}  — {fastest[0]}",
+            f"  Average : {_fmt_duration(avg_time)}",
+            f"{'─' * 50}",
+        ]
+        for line in stats_lines:
+            print(line)
+
+        print("\n  Per-job breakdown:")
+        for i, (title, elapsed) in enumerate(sorted(job_times, key=lambda x: x[1], reverse=True), 1):
+            print(f"  {i:>2}. {_fmt_duration(elapsed):>6}  {title}")
+        print()
+
     # Note: `jobs_to_evaluate` contains dictionaries that mutated during `evaluate_single_job`.
     # Let's map LLM mutation results back to the original inserts/upserts arrays based on source_id!
-    
-    evaluated_map = {job.get("source_id"): (job, stat, rsn) for job, stat, rsn in processed_jobs}
+
+    evaluated_map = {job.get("source_id"): (job, stat, rsn) for job, stat, rsn, _elapsed in processed_jobs}
     
     def update_job_with_ai(job_tuple):
         j_dict, j_stat, j_rsn = job_tuple
         jid = j_dict.get("source_id")
         if jid in evaluated_map:
-            ai_dict, ai_stat, ai_rsn = evaluated_map[jid]
+            ai_dict, ai_stat, ai_rsn, _elapsed = evaluated_map[jid]
             # Reattach the mutated scores
             j_dict["ai_score"] = ai_dict.get("ai_score")
             j_dict["ai_analysis"] = ai_dict.get("ai_analysis")
@@ -429,7 +465,6 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
     total_saved = len(final_inserts) + len(final_upserts)
     
     # 1) Create the ScanSession first to get a valid UUID
-    import uuid
     scan_session = models.ScanSession(
         total_jobs_scanned=len(jobs),
         total_jobs_saved=total_saved,
@@ -497,13 +532,21 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
         db.add(db_job)
 
     # 3) Upsert existing jobs (from IGNORED back to ACTIVE, or forced rescan sync)
+    # Batch-fetch all existing activity logs in one query to avoid N+1 per upsert.
+    upsert_source_ids = [job.get("source_id") for job, _, _ in final_upserts if job.get("source_id")]
+    if upsert_source_ids:
+        existing_logs_rows = db.query(
+            models.JobPosition.source_id,
+            models.JobPosition.activity_log,
+        ).filter(
+            models.JobPosition.source_id.in_(upsert_source_ids)
+        ).all()
+        existing_logs_map = {row.source_id: row.activity_log for row in existing_logs_rows}
+    else:
+        existing_logs_map = {}
+
     for job, status, ignore_reason in final_upserts:
-        # Fetch existing log so we can append to it (not overwrite)
-        existing = db.query(models.JobPosition.activity_log).filter(
-            models.JobPosition.source_id == job.get("source_id"),
-            models.JobPosition.source == job.get("source"),
-        ).scalar()
-        log = list(existing or [])
+        log = list(existing_logs_map.get(job.get("source_id")) or [])
         log.append(_activity_event(
             "STATUS_CHANGED",
             f"Status updated to {status}" + (f" — {ignore_reason}" if ignore_reason else ""),
@@ -552,8 +595,8 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
     
     total_elapsed = round(time.time() - start_time, 2)
     await manager.broadcast({
-        "type": "complete", 
-        "message": f"DEEP SCAN COMPLETE. Processed {total_saved} database inputs in {total_elapsed}s."
+        "type": "complete",
+        "message": f"DEEP SCAN COMPLETE. Processed {total_saved} database inputs in {_fmt_duration(total_elapsed)}."
     })
     
     return {"message": "request received", "total_processed": len(jobs), "status": "success"}
