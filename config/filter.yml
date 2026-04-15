@@ -65,6 +65,7 @@ title_filter:
     - "manager"
     - "director"
     - "Camera"
+    - "EMEA"
 
 job_description_filter:
   include_any:
