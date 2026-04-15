@@ -607,7 +607,7 @@ function Connector({ label }: { label?: string }) {
   )
 }
 
-// ─── Ashby Portal Panel ───────────────────────────────────────────────────────
+// ─── CSV parsing helpers ─────────────────────────────────────────────────────
 
 function splitCsvLine(line: string): string[] {
   const result: string[] = []
@@ -622,48 +622,127 @@ function splitCsvLine(line: string): string[] {
   return result
 }
 
-function parseAshbySlugsFromCsv(text: string): { slug: string; name: string }[] {
+/** Read CSV text → return header list + raw cell values per column-index */
+function parseCsvHeaders(text: string): { headers: string[]; rows: string[][] } {
   const lines = text.split('\n').filter(l => l.trim())
-  if (lines.length < 2) return []
-
+  if (lines.length < 1) return { headers: [], rows: [] }
   const headers = splitCsvLine(lines[0]).map(h => h.trim().replace(/^"|"$/g, ''))
+  const rows = lines.slice(1).map(l => splitCsvLine(l).map(c => c.trim().replace(/^"|"$/g, '')))
+  return { headers, rows }
+}
 
-  // Find column containing "zReHs href" (exact or partial match)
-  const colIdx = headers.findIndex(h => h.includes('zReHs') || h === 'href')
+/** Given rows + a column index, return the raw cell values (non-empty only, max 50) */
+function previewColumn(rows: string[][], colIdx: number): string[] {
+  return rows
+    .map(r => (r[colIdx] ?? '').trim())
+    .filter(Boolean)
+    .slice(0, 50)
+}
 
+type ParsedSlug = { slug: string; name: string }
+
+/** Extract Ashby slugs from a list of URLs */
+function extractAshbySlugs(urls: string[]): ParsedSlug[] {
   const seen = new Set<string>()
-  const results: { slug: string; name: string }[] = []
-
-  for (let i = 1; i < lines.length; i++) {
-    const cells = splitCsvLine(lines[i])
-    // If we found a specific column use it, otherwise scan all cells
-    const candidates = colIdx >= 0 ? [cells[colIdx]] : cells
-
-    for (const cell of candidates) {
-      const raw = (cell ?? '').trim().replace(/^"|"$/g, '')
-      try {
-        const u = new URL(raw)
-        if (u.hostname !== 'jobs.ashbyhq.com') continue
-        const parts = u.pathname.split('/').filter(Boolean)
-        if (parts.length === 0) continue
-        // Decode %20 etc, lowercase for dedup — works for company URLs and
-        // individual job URLs (/org/uuid), always taking the first segment
-        const slug = decodeURIComponent(parts[0]).toLowerCase()
-        if (slug.includes(' ')) continue  // URL-encoded spaces = invalid Ashby slug
-        if (!seen.has(slug)) { seen.add(slug); results.push({ slug: slug, name: slug }) }
-      } catch { /* not a URL */ }
-    }
+  const results: ParsedSlug[] = []
+  for (const raw of urls) {
+    try {
+      const u = new URL(raw)
+      if (u.hostname !== 'jobs.ashbyhq.com') continue
+      const parts = u.pathname.split('/').filter(Boolean)
+      if (parts.length === 0) continue
+      const slug = decodeURIComponent(parts[0]).toLowerCase()
+      if (slug.includes(' ')) continue
+      if (!seen.has(slug)) { seen.add(slug); results.push({ slug, name: slug }) }
+    } catch { /* not a URL */ }
   }
   return results
 }
 
+/** Extract Greenhouse board-token slugs from a list of URLs */
+function extractGreenhouseSlugs(urls: string[]): ParsedSlug[] {
+  const seen = new Set<string>()
+  const results: ParsedSlug[] = []
+  for (const raw of urls) {
+    try {
+      const u = new URL(raw)
+      // job-boards.greenhouse.io/{token}/jobs/...
+      if (!u.hostname.includes('greenhouse.io')) continue
+      const parts = u.pathname.split('/').filter(Boolean)
+      if (parts.length === 0) continue
+      const slug = decodeURIComponent(parts[0]).toLowerCase()
+      if (slug.includes(' ')) continue
+      if (!seen.has(slug)) { seen.add(slug); results.push({ slug, name: slug }) }
+    } catch { /* not a URL */ }
+  }
+  return results
+}
+
+// ─── Shared CSV column picker component ──────────────────────────────────────
+
+interface CsvColumnPickerProps {
+  headers: string[]
+  rows: string[][]
+  selectedCol: number | null
+  onSelect: (idx: number) => void
+  urlFilter: (val: string) => boolean   // returns true if cell looks like a matching URL
+}
+
+function CsvColumnPicker({ headers, rows, selectedCol, onSelect, urlFilter }: CsvColumnPickerProps) {
+  const previewUrls = selectedCol !== null
+    ? previewColumn(rows, selectedCol).filter(urlFilter)
+    : []
+
+  return (
+    <div className="csv-col-picker">
+      <div className="csv-col-picker-label">Which column contains the job URLs?</div>
+      <div className="csv-col-picker-options">
+        {headers.map((h, i) => (
+          <button
+            key={i}
+            className={`csv-col-btn ${selectedCol === i ? 'csv-col-btn--active' : ''}`}
+            onClick={() => onSelect(i)}
+          >
+            {h || `Column ${i + 1}`}
+          </button>
+        ))}
+      </div>
+      {selectedCol !== null && (
+        <div className="csv-col-preview">
+          <div className="csv-col-preview-label">
+            {previewUrls.length > 0
+              ? `${previewUrls.length} matching URL(s) found in this column:`
+              : 'No matching URLs found in this column — try another.'}
+          </div>
+          {previewUrls.length > 0 && (
+            <textarea
+              className="csv-col-preview-box"
+              readOnly
+              rows={Math.min(previewUrls.length, 6)}
+              value={previewUrls.join('\n')}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Ashby Portal Panel ───────────────────────────────────────────────────────
+
 function AshbyPortalPanel() {
-  const [portals, setPortals]           = useState<Portal[]>([])
-  const [loading, setLoading]           = useState(false)
-  const [feedback, setFeedback]         = useState<string | null>(null)
-  const [feedbackErr, setFeedbackErr]   = useState(false)
-  const [importing, setImporting]       = useState(false)
-  const fileInputRef                    = useRef<HTMLInputElement>(null)
+  const [portals, setPortals]         = useState<Portal[]>([])
+  const [loading, setLoading]         = useState(false)
+  const [feedback, setFeedback]       = useState<string | null>(null)
+  const [feedbackErr, setFeedbackErr] = useState(false)
+  const [importing, setImporting]     = useState(false)
+  const fileInputRef                  = useRef<HTMLInputElement>(null)
+
+  // CSV column-picker state
+  const [csvHeaders, setCsvHeaders]   = useState<string[]>([])
+  const [csvRows, setCsvRows]         = useState<string[][]>([])
+  const [csvColIdx, setCsvColIdx]     = useState<number | null>(null)
+  const [csvPending, setCsvPending]   = useState(false)   // waiting for col selection
 
   const fetchPortals = () => {
     setLoading(true)
@@ -676,30 +755,46 @@ function AshbyPortalPanel() {
 
   useEffect(() => { fetchPortals() }, [])
 
+  // Step 1 — file chosen → parse headers, show column picker
   const handleCsvFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    e.target.value = ''   // reset so same file can be re-selected
-
+    e.target.value = ''
     const text = await file.text()
-    const parsed = parseAshbySlugsFromCsv(text)
-
-    if (parsed.length === 0) {
-      setFeedback('No Ashby URLs found — make sure the CSV has a "zReHs href" column.')
+    const { headers, rows } = parseCsvHeaders(text)
+    if (headers.length === 0) {
+      setFeedback('Could not read CSV headers.')
       setFeedbackErr(true)
       return
     }
+    setCsvHeaders(headers)
+    setCsvRows(rows)
+    setCsvColIdx(null)
+    setCsvPending(true)
+    setFeedback(null)
+  }
 
+  // Step 2 — user confirmed column → extract slugs & import
+  const handleConfirmImport = async () => {
+    if (csvColIdx === null) return
+    const urls = previewColumn(csvRows, csvColIdx)
+    const parsed = extractAshbySlugs(urls)
+    if (parsed.length === 0) {
+      setFeedback('No Ashby URLs found in that column.')
+      setFeedbackErr(true)
+      setCsvPending(false)
+      return
+    }
     const existingSlugs = new Set(portals.map(p => p.slug))
     const newEntries = parsed.filter(p => !existingSlugs.has(p.slug))
-
     if (newEntries.length === 0) {
       setFeedback(`All ${parsed.length} slug(s) already tracked — nothing to import.`)
       setFeedbackErr(false)
+      setCsvPending(false)
       return
     }
-
     setImporting(true)
+    setCsvPending(false)
     setFeedback(null)
     try {
       const res = await fetch('http://localhost:8000/api/portals/import', {
@@ -711,7 +806,7 @@ function AshbyPortalPanel() {
       const result = await res.json()
       setFeedback(`Imported ${result.imported} new portal(s), skipped ${result.skipped} duplicate(s).`)
       setFeedbackErr(false)
-      fetchPortals()   // refresh list
+      fetchPortals()
     } catch {
       setFeedback('Import failed — server unreachable.')
       setFeedbackErr(true)
@@ -720,14 +815,16 @@ function AshbyPortalPanel() {
     }
   }
 
-  const ashby = portals.filter(p => p.enabled)
+  const active   = portals.filter(p => p.enabled)
   const disabled = portals.filter(p => !p.enabled)
+
+  const isAshbyUrl = (v: string) => { try { return new URL(v).hostname === 'jobs.ashbyhq.com' } catch { return false } }
 
   return (
     <div className="portal-panel">
       <div className="portal-panel-header">
         <span className="portal-panel-count">
-          {loading ? 'Loading…' : `${ashby.length} active · ${disabled.length} disabled`}
+          {loading ? 'Loading…' : `${active.length} active · ${disabled.length} disabled`}
         </span>
         <div className="portal-panel-actions">
           <input
@@ -739,13 +836,41 @@ function AshbyPortalPanel() {
           />
           <button
             className="portal-import-btn"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => { setCsvPending(false); fileInputRef.current?.click() }}
             disabled={importing}
           >
             {importing ? 'Importing…' : '⬆ Import from CSV'}
           </button>
         </div>
       </div>
+
+      {/* ── Column picker (step 1) ── */}
+      {csvPending && (
+        <div className="csv-import-panel">
+          <CsvColumnPicker
+            headers={csvHeaders}
+            rows={csvRows}
+            selectedCol={csvColIdx}
+            onSelect={setCsvColIdx}
+            urlFilter={isAshbyUrl}
+          />
+          <div className="csv-import-actions">
+            <button
+              className="portal-import-btn"
+              onClick={handleConfirmImport}
+              disabled={csvColIdx === null}
+            >
+              Import slugs from this column
+            </button>
+            <button
+              className="portal-cancel-btn"
+              onClick={() => setCsvPending(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {feedback && (
         <div className={`portal-feedback ${feedbackErr ? 'portal-feedback--err' : 'portal-feedback--ok'}`}>
@@ -785,6 +910,14 @@ function GreenhousePortalPanel() {
   const [token, setToken]             = useState('')
   const [name, setName]               = useState('')
   const [submitting, setSubmitting]   = useState(false)
+  const fileInputRef                  = useRef<HTMLInputElement>(null)
+
+  // CSV column-picker state
+  const [csvHeaders, setCsvHeaders]   = useState<string[]>([])
+  const [csvRows, setCsvRows]         = useState<string[][]>([])
+  const [csvColIdx, setCsvColIdx]     = useState<number | null>(null)
+  const [csvPending, setCsvPending]   = useState(false)
+  const [importing, setImporting]     = useState(false)
 
   const fetchPortals = () => {
     setLoading(true)
@@ -797,6 +930,7 @@ function GreenhousePortalPanel() {
 
   useEffect(() => { fetchPortals() }, [])
 
+  // Manual add
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault()
     const t = token.trim().toLowerCase()
@@ -815,9 +949,7 @@ function GreenhousePortalPanel() {
       if (result.imported > 0) {
         setFeedback(`Added: ${t}`)
         setFeedbackErr(false)
-        setToken('')
-        setName('')
-        setAdding(false)
+        setToken(''); setName(''); setAdding(false)
         fetchPortals()
       } else {
         setFeedback(`'${t}' is already tracked.`)
@@ -831,8 +963,62 @@ function GreenhousePortalPanel() {
     }
   }
 
+  // CSV step 1 — headers
+  const handleCsvFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    const text = await file.text()
+    const { headers, rows } = parseCsvHeaders(text)
+    if (headers.length === 0) {
+      setFeedback('Could not read CSV headers.')
+      setFeedbackErr(true)
+      return
+    }
+    setCsvHeaders(headers); setCsvRows(rows)
+    setCsvColIdx(null); setCsvPending(true); setFeedback(null)
+  }
+
+  // CSV step 2 — confirm
+  const handleConfirmImport = async () => {
+    if (csvColIdx === null) return
+    const urls = previewColumn(csvRows, csvColIdx)
+    const parsed = extractGreenhouseSlugs(urls)
+    if (parsed.length === 0) {
+      setFeedback('No Greenhouse URLs found in that column.')
+      setFeedbackErr(true); setCsvPending(false); return
+    }
+    const existingSlugs = new Set(portals.map(p => p.slug))
+    const newEntries = parsed
+      .filter(p => !existingSlugs.has(p.slug))
+      .map(p => ({ ...p, source: 'greenhouse' }))
+    if (newEntries.length === 0) {
+      setFeedback(`All ${parsed.length} slug(s) already tracked — nothing to import.`)
+      setFeedbackErr(false); setCsvPending(false); return
+    }
+    setImporting(true); setCsvPending(false); setFeedback(null)
+    try {
+      const res = await fetch('http://localhost:8000/api/portals/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newEntries),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const result = await res.json()
+      setFeedback(`Imported ${result.imported} new portal(s), skipped ${result.skipped} duplicate(s).`)
+      setFeedbackErr(false); fetchPortals()
+    } catch {
+      setFeedback('Import failed — server unreachable.')
+      setFeedbackErr(true)
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const active   = portals.filter(p => p.enabled)
   const disabled = portals.filter(p => !p.enabled)
+
+  const isGhUrl = (v: string) => { try { return new URL(v).hostname.includes('greenhouse.io') } catch { return false } }
 
   return (
     <div className="portal-panel">
@@ -841,6 +1027,20 @@ function GreenhousePortalPanel() {
           {loading ? 'Loading…' : `${active.length} active · ${disabled.length} disabled`}
         </span>
         <div className="portal-panel-actions">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv"
+            style={{ display: 'none' }}
+            onChange={handleCsvFile}
+          />
+          <button
+            className="portal-import-btn"
+            onClick={() => { setCsvPending(false); fileInputRef.current?.click() }}
+            disabled={importing}
+          >
+            {importing ? 'Importing…' : '⬆ Import from CSV'}
+          </button>
           <button
             className="portal-import-btn"
             onClick={() => { setAdding(a => !a); setFeedback(null) }}
@@ -850,11 +1050,37 @@ function GreenhousePortalPanel() {
         </div>
       </div>
 
+      {/* ── CSV column picker ── */}
+      {csvPending && (
+        <div className="csv-import-panel">
+          <CsvColumnPicker
+            headers={csvHeaders}
+            rows={csvRows}
+            selectedCol={csvColIdx}
+            onSelect={setCsvColIdx}
+            urlFilter={isGhUrl}
+          />
+          <div className="csv-import-actions">
+            <button
+              className="portal-import-btn"
+              onClick={handleConfirmImport}
+              disabled={csvColIdx === null}
+            >
+              Import slugs from this column
+            </button>
+            <button className="portal-cancel-btn" onClick={() => setCsvPending(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Manual add form ── */}
       {adding && (
         <form className="gh-add-form" onSubmit={handleAdd}>
           <input
             className="gh-add-input"
-            placeholder="slug (e.g. amplemarket)"
+            placeholder="board token / slug (e.g. spacex)"
             value={token}
             onChange={e => setToken(e.target.value)}
             required
