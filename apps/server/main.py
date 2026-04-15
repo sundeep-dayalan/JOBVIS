@@ -111,6 +111,7 @@ async def startup_event():
     retries = 5
     while retries > 0:
         try:
+            database.ensure_database_exists()
             models.Base.metadata.create_all(bind=database.engine)
             # Safe migration: add activity_log column to existing DBs that predate this feature
             with database.engine.connect() as conn:
@@ -183,6 +184,8 @@ async def shutdown_event():
 origins = [
     "http://localhost:5173", # Vite default port
     "http://127.0.0.1:5173",
+    "http://localhost:1997", # Prod alternate port
+    "http://127.0.0.1:1997",
 ]
 
 app.add_middleware(

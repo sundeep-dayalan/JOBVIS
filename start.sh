@@ -1,7 +1,16 @@
 #!/bin/bash
 
+clear
 # Exit immediately if a command exits with a non-zero status
 set -e
+
+ENV_MODE="dev"
+if [ "$1" == "--prod" ]; then
+    ENV_MODE="prod"
+    echo "Starting in PRODUCTION mode..."
+else
+    echo "Starting in DEVELOPMENT mode..."
+fi
 
 # Make sure child processes (the background server) die when this script is closed
 trap 'kill 0' SIGINT SIGTERM EXIT
@@ -13,7 +22,7 @@ echo ""
 
 echo "[0/2] Starting Postgres Database via Docker..."
 docker compose up -d
-echo "Waiting a few seconds for DB to be ready..."
+echo "Waiting a few seconds for DB to be configured..."
 sleep 3
 echo ""
 
@@ -26,13 +35,19 @@ source venv/bin/activate
 lsof -ti:8000 | xargs kill -9 2>/dev/null || true
 
 # Run server and stream its output. Running in background using '&'
-uvicorn main:app --reload --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 3 &
+APP_ENV=$ENV_MODE uvicorn main:app --reload --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 3 &
 
 # Go back to the original directory
 cd ../..
 
 # Start the React Frontend
-echo "[2/2] Starting React Vite UI..."
+if [ "$ENV_MODE" == "prod" ]; then
+    UI_PORT=1997
+else
+    UI_PORT=5173
+fi
+
+echo "[2/2] Starting React Vite UI on port $UI_PORT..."
 cd apps/ui
 # This will run in the foreground so you can see Vite's output and stop everything with Ctrl+C
-npm run dev
+npm run dev -- --port $UI_PORT

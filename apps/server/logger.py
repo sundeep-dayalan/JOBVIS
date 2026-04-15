@@ -29,6 +29,8 @@ os.makedirs(LOG_DIR, exist_ok=True)
 # ── Remove loguru's default stderr sink (we add our own below) ───────────────
 logger.remove()
 
+APP_ENV = os.getenv("APP_ENV", "dev").upper()
+
 # ── Sink 1: Coloured console — mirrors what print() gave you before ──────────
 logger.add(
     sys.stderr,
@@ -36,6 +38,7 @@ logger.add(
     level="DEBUG",
     format=(
         "<green>{time:HH:mm:ss}</green> "
+        f"<cyan>[{APP_ENV}]</cyan> "
         "<level>{level: <7}</level> "
         "{message}"
     ),

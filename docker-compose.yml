@@ -8,7 +8,7 @@ services:
     environment:
       POSTGRES_USER: jobvis
       POSTGRES_PASSWORD: jobvispassword
-      POSTGRES_DB: jobvisdb
+      POSTGRES_DB: postgres
     ports:
       - "5432:5432"
     volumes:
