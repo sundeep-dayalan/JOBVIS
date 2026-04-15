@@ -832,20 +832,22 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
     final_upserts = [update_job_with_ai(jt) for jt in upserts]
     
     # Telemetry logging ignores deduplicated skipped jobs!
-    total_ignored = pipeline_result["ignored_count"]
-    total_active = len(jobs_to_evaluate)
+    # Recalculate accurately based on final LLM/preliminary decisions (resolves rescan sync bugs)
+    total_active = sum(1 for _, status, _ in final_inserts + final_upserts if status == "ACTIVE")
+    total_ignored = sum(1 for _, status, _ in final_inserts + final_upserts if status == "IGNORED")
     total_saved = len(final_inserts) + len(final_upserts)
     
     # 1) Use the provided shared session, or create a new one (LinkedIn / single-org path)
     if session_id is not None:
         _scan_id = session_id
     else:
+        derived_source = jobs[0].get("source", scan_source) if jobs else scan_source
         scan_session = models.ScanSession(
             total_jobs_scanned=len(jobs),
             total_jobs_saved=total_saved,
             total_ignored=total_ignored,
             source_meta=[{
-                "source": scan_source,
+                "source": derived_source,
                 "total_jobs_scanned": len(jobs),
                 "skipped_duplicates": skipped,
                 "total_active": total_active,

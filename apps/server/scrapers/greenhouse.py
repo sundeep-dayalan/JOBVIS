@@ -126,9 +126,32 @@ def _make_client() -> httpx.AsyncClient:
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
-def _strip_html(html: str) -> str:
-    """Strips HTML tags. Fast enough for job descriptions."""
-    return re.sub(r'<[^>]+>', '', html).strip()
+import html
+
+def _strip_html(text: str) -> str:
+    """Strips HTML tags and unescapes entities to maintain readability."""
+    if not text:
+        return ""
+    
+    # 1. Unescape HTML entities (handles double escaping if present)
+    text = html.unescape(text)
+    if '&lt;' in text or '&gt;' in text or '&amp;' in text:
+        text = html.unescape(text)
+        
+    # 2. Add spaces or newlines around certain tags to preserve layout readability
+    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</(p|div|ul|ol|h[1-6]|tr)>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<li[^>]*>', '\n• ', text, flags=re.IGNORECASE)
+    text = re.sub(r'</li>', '\n', text, flags=re.IGNORECASE)
+    
+    # 3. Strip remaining HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    
+    # 4. Clean up excessive whitespace
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n ?\n+', '\n\n', text)
+    
+    return text.strip()
 
 
 def _jitter(base: float) -> float:
