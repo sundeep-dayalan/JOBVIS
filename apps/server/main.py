@@ -25,10 +25,12 @@ from pipeline.pipeline import JobPipeline
 from mappers import linkedinDataMapper
 from scrapers.ashby import run_ashby_scan
 from pipeline.preprocessors.jd_stripper import strip_jd
+from scheduler import Scheduler
 
 # Initialize the global engines
 llm = LLMEngine()
 pipeline = JobPipeline()
+job_scheduler = Scheduler()
 
 # Global registry of background tasks — cancelled cleanly on server shutdown
 _background_tasks: set[asyncio.Task] = set()
@@ -115,7 +117,7 @@ async def startup_event():
                     "activity_log JSONB DEFAULT '[]'::jsonb"
                 ))
                 conn.commit()
-            print("[✔] Database connected and initialized gracefully.")
+            print("[\u2714] Database connected and initialized gracefully.")
             break
         except Exception as e:
             print(f"Database not ready yet, waiting 3 seconds... ({retries} retries left)")
@@ -125,12 +127,30 @@ async def startup_event():
     print(f"\nChecking LLM Engine Health ({llm.provider}: {llm.model})...")
     is_alive = await llm.check_health()
     if is_alive:
-        print(f"[✔] LLM Engine online - {llm.provider} is responsive.")
+        print(f"[\u2714] LLM Engine online - {llm.provider} is responsive.")
         await llm.preload_model()
     else:
         print(f"[X] CRITICAL: LLM Engine provider '{llm.provider}' at {llm.url} is DOWN or unreachable.")
         print("Halting FastAPI application startup as per strict config constraints.")
         exit_os._exit(1)
+
+    # ── Register scheduled jobs ────────────────────────────────────────────────
+    # interval_fn is a lambda so it re-reads settings.yml on every cycle.
+    # Changing the interval or toggling enable/disable in the UI takes effect
+    # on the next sleep without any server restart.
+    def _ashby_interval_fn() -> float:
+        s = _load_settings()
+        cfg = s.get("scheduler", {}).get("ashby", {})
+        if not cfg.get("enabled", False):
+            return 0   # Scheduler._run_loop polls every 30s when interval <= 0
+        return cfg.get("interval_minutes", 60) * 60
+
+    job_scheduler.register(
+        name="ashby",
+        interval_fn=_ashby_interval_fn,
+        job_fn=_execute_ashby_scan,
+        task_tracker=_track_task,
+    )
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -191,6 +211,56 @@ async def receive_rescan(request: RescanRequest, db: Session = Depends(database.
     return await execute_job_pipeline(jobs, db, force_rescan=True)
 
 
+# ─── Settings helpers ────────────────────────────────────────────────────────
+
+SETTINGS_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), '../../config/settings.yml')
+)
+
+_SETTINGS_DEFAULTS = {
+    "pipeline": {
+        "ai_scoring_enabled": True,
+        "ashby_description_fetch_enabled": True,
+    },
+    "scheduler": {
+        "ashby": {
+            "enabled": False,          # opt-in — must be explicitly enabled
+            "interval_minutes": 60,    # base interval; \u00b11 min jitter applied automatically
+        }
+    },
+}
+
+def _load_settings() -> dict:
+    """Reads config/settings.yml; falls back to defaults on any error."""
+    try:
+        with open(SETTINGS_PATH, 'r') as f:
+            data = yaml.safe_load(f) or {}
+        # Deep-merge with defaults so missing keys never crash
+        for section, defaults in _SETTINGS_DEFAULTS.items():
+            if section not in data:
+                data[section] = dict(defaults)
+            else:
+                for key, val in defaults.items():
+                    data[section].setdefault(key, val)
+        return data
+    except Exception as e:
+        print(f"[Settings] Could not load settings.yml: {e} — using defaults")
+        return dict(_SETTINGS_DEFAULTS)
+
+
+def _save_settings(settings: dict) -> None:
+    """Writes settings dict back to settings.yml atomically."""
+    import tempfile, shutil
+    tmp_path = SETTINGS_PATH + ".tmp"
+    try:
+        with open(tmp_path, 'w') as f:
+            yaml.dump(settings, f, default_flow_style=False, allow_unicode=True)
+        shutil.move(tmp_path, SETTINGS_PATH)
+    except Exception as e:
+        print(f"[Settings] Failed to write settings.yml: {e}")
+        raise
+
+
 # ─── Portal helpers ───────────────────────────────────────────────────────────
 
 PORTALS_PATH = os.path.abspath(
@@ -217,6 +287,86 @@ def _load_portals(source: Optional[str] = None, enabled_only: bool = True) -> li
     return entries
 
 
+# ─── Settings endpoints ──────────────────────────────────────────────────────
+
+@app.get("/api/settings")
+def get_settings():
+    """Returns the current runtime settings."""
+    return _load_settings()
+
+
+class PipelineSettingsPatch(BaseModel):
+    ai_scoring_enabled: Optional[bool] = None
+    ashby_description_fetch_enabled: Optional[bool] = None
+
+class AshbySchedulerPatch(BaseModel):
+    enabled: Optional[bool] = None
+    interval_minutes: Optional[int] = None
+
+class SchedulerSettingsPatch(BaseModel):
+    ashby: Optional[AshbySchedulerPatch] = None
+
+class SettingsPatch(BaseModel):
+    pipeline: Optional[PipelineSettingsPatch] = None
+    scheduler: Optional[SchedulerSettingsPatch] = None
+
+@app.patch("/api/settings")
+def patch_settings(patch: SettingsPatch):
+    """Partially updates runtime settings and persists to settings.yml."""
+    current = _load_settings()
+    if patch.pipeline is not None:
+        if patch.pipeline.ai_scoring_enabled is not None:
+            current["pipeline"]["ai_scoring_enabled"] = patch.pipeline.ai_scoring_enabled
+        if patch.pipeline.ashby_description_fetch_enabled is not None:
+            current["pipeline"]["ashby_description_fetch_enabled"] = patch.pipeline.ashby_description_fetch_enabled
+    if patch.scheduler is not None:
+        sched = current.setdefault("scheduler", {})
+        if patch.scheduler.ashby is not None:
+            ashby_cfg = sched.setdefault("ashby", dict(_SETTINGS_DEFAULTS["scheduler"]["ashby"]))
+            if patch.scheduler.ashby.enabled is not None:
+                ashby_cfg["enabled"] = patch.scheduler.ashby.enabled
+            if patch.scheduler.ashby.interval_minutes is not None:
+                ashby_cfg["interval_minutes"] = patch.scheduler.ashby.interval_minutes
+    _save_settings(current)
+    print(f"[Settings] Updated: {current}")
+    return current
+
+
+@app.get("/api/scheduler/status")
+def get_scheduler_status():
+    """Returns live scheduler task states + current config."""
+    settings = _load_settings()
+    return {
+        "tasks": job_scheduler.status(),
+        "config": settings.get("scheduler", {}),
+    }
+
+
+_VALID_SCHEDULER_JOBS = {"ashby"}
+
+@app.post("/api/scheduler/trigger/{job_name}")
+async def trigger_scheduler_job(job_name: str):
+    """
+    Immediately triggers a scheduled job.
+    If the scheduler is sleeping, it wakes it and resets the timer.
+    If the scheduler is disabled, fires the job once directly as a background task.
+    """
+    if job_name not in _VALID_SCHEDULER_JOBS:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"Unknown scheduler job: '{job_name}'")
+
+    woken = job_scheduler.trigger_now(job_name)
+
+    if not woken:
+        # Scheduler not sleeping (disabled or not yet registered) — fire directly
+        print(f"[/api/scheduler/trigger/{job_name}] Scheduler not active, firing directly")
+        task = asyncio.create_task(_execute_ashby_scan())
+        _track_task(task)
+        return {"message": f"'{job_name}' fired directly (scheduler inactive). Timer not reset.", "timer_reset": False}
+
+    return {"message": f"'{job_name}' triggered now. Timer will reset after this run.", "timer_reset": True}
+
+
 # ─── Portal management ────────────────────────────────────────────────────────
 
 @app.get("/api/portals")
@@ -236,23 +386,21 @@ def list_portals():
 
 # ─── Server-side scrapers ─────────────────────────────────────────────────────
 
-class AshbyScrapeRequest(BaseModel):
-    org_slug: Optional[str] = None  # specific org, or omit for all enabled portals
-
-@app.post("/api/scrape/ashby")
-async def scrape_ashby(request: AshbyScrapeRequest):
-    """Triggers server-side Ashby scrape. Reads portals.yml, skips existing DB jobs."""
-    if request.org_slug:
+async def _execute_ashby_scan(org_slug: Optional[str] = None) -> dict:
+    """
+    Core Ashby scan logic — shared by the HTTP endpoint and the scheduler.
+    Reads current settings fresh on every call so UI toggles take effect immediately.
+    """
+    if org_slug:
         all_ashby = _load_portals(source="ashby", enabled_only=False)
-        match = next((e for e in all_ashby if e["org_slug"] == request.org_slug), None)
-        portals = [{"org_slug": request.org_slug, "name": match["name"] if match else request.org_slug}]
+        match = next((e for e in all_ashby if e["org_slug"] == org_slug), None)
+        portals = [{"org_slug": org_slug, "name": match["name"] if match else org_slug}]
     else:
         enabled = _load_portals(source="ashby", enabled_only=True)
         if not enabled:
             return {"message": "No enabled Ashby portals in portals.yml.", "total_processed": 0}
         portals = [{"org_slug": e["org_slug"], "name": e["name"]} for e in enabled]
 
-    # One DB query to get all known Ashby IDs — skips description fetches for existing jobs
     _db = next(database.get_db())
     try:
         existing_ids: set[str] = {
@@ -262,21 +410,36 @@ async def scrape_ashby(request: AshbyScrapeRequest):
                           .all()
             if row.source_id
         }
-        print(f"[/api/scrape/ashby] {len(existing_ids)} existing Ashby jobs in DB")
+        print(f"[Ashby] {len(existing_ids)} existing jobs in DB")
     finally:
         _db.close()
 
-    # Pipeline callback — each org gets its own DB session to avoid conflicts
-    async def _pipeline(jobs: list[dict], org_slug: str) -> dict:
+    async def _pipeline(jobs: list[dict], slug: str) -> dict:
         db = next(database.get_db())
         try:
-            result = await execute_job_pipeline(jobs, db, force_rescan=False)
-            result["org"] = org_slug
+            result = await execute_job_pipeline(jobs, db, force_rescan=False, scan_source="ashby")
+            result["org"] = slug
             return result
         finally:
             db.close()
 
-    return await run_ashby_scan(portals, existing_ids, _pipeline, task_tracker=_track_task)
+    settings = _load_settings()
+    return await run_ashby_scan(
+        portals,
+        existing_ids,
+        _pipeline,
+        task_tracker=_track_task,
+        fetch_descriptions=settings.get("pipeline", {}).get("ashby_description_fetch_enabled", True),
+    )
+
+
+class AshbyScrapeRequest(BaseModel):
+    org_slug: Optional[str] = None  # specific org, or omit for all enabled portals
+
+@app.post("/api/scrape/ashby")
+async def scrape_ashby(request: AshbyScrapeRequest):
+    """Triggers server-side Ashby scrape. Reads portals.yml, skips existing DB jobs."""
+    return await _execute_ashby_scan(org_slug=request.org_slug)
 
 # ─── Activity Log Helper ──────────────────────────────────────────────────────
 
@@ -303,11 +466,15 @@ def _activity_event(event: str, summary: str, detail: dict = None) -> dict:
     }
 
 
-async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool = False) -> dict:
+async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool = False, scan_source: str = "linkedin") -> dict:
     start_time = time.time()
     await manager.broadcast({"type": "info", "message": f"INITIATING DEEP SCAN... Received {len(jobs)} jobs."})
     await manager.broadcast({"type": "info", "message": "Applying pipeline deduplication and preliminary keyword filters..."})
-    
+
+    # Read live settings (re-read each pipeline run so UI toggles take effect immediately)
+    settings = _load_settings()
+    ai_scoring_enabled: bool = settings.get("pipeline", {}).get("ai_scoring_enabled", True)
+
     # 1. Execute advanced pipeline logic
     pipeline_result = pipeline.filter_and_deduplicate(jobs, db, force_rescan=force_rescan)
     
@@ -319,12 +486,15 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
     print(f"Upserts count: {len(upserts)}")
     print(f"Inserts count: {len(inserts)}")
     print(f"Skipped: {skipped}")
+    print(f"AI Scoring enabled: {ai_scoring_enabled}")
     
     # Report deductions visually via websocket
     await manager.broadcast({"type": "info", "message": f"DEDUPLICATION: Skipped {skipped} historically active jobs."})
     await manager.broadcast({"type": "info", "message": f"PRELIMINARY: {pipeline_result['ignored_count']} new/upserted jobs immediately ignored via keywords."})
     
-    if len(jobs_to_evaluate) > 0:
+    if not ai_scoring_enabled:
+        await manager.broadcast({"type": "info", "message": "⚠ AI SCORING is DISABLED — bypassing LLM evaluation. All surviving jobs will be saved as ACTIVE."})
+    elif len(jobs_to_evaluate) > 0:
         await manager.broadcast({"type": "info", "message": f"Beginning AI scoring for {len(jobs_to_evaluate)} surviving active jobs..."})
     else:
         await manager.broadcast({"type": "info", "message": "No new jobs survived preliminary filters. Terminating early."})
@@ -394,22 +564,29 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
 
     processed_jobs = []
 
-    # Unified concurrency path for both local and cloud modes.
-    # Local Ollama defaults to concurrency=1 (sequential). Set concurrency > 1 in
-    # llm_config.yml only if OLLAMA_NUM_PARALLEL is configured on your Ollama server.
-    concurrency_label = f"concurrency={llm.concurrency}" if llm.concurrency > 1 else "sequential"
-    print(f"Running {len(jobs_to_evaluate)} evaluations [{llm.mode} mode | {concurrency_label}]")
+    if not ai_scoring_enabled:
+        # ── AI SCORING BYPASSED ───────────────────────────────────────────────
+        # Skip LLM entirely. All jobs that made it through keyword filters are
+        # treated as ACTIVE with no score. The evaluated_map stays empty so the
+        # downstream merge loop just keeps their preliminary status as-is.
+        print("[Pipeline] AI scoring bypassed by settings toggle.")
+    else:
+        # Unified concurrency path for both local and cloud modes.
+        # Local Ollama defaults to concurrency=1 (sequential). Set concurrency > 1 in
+        # llm_config.yml only if OLLAMA_NUM_PARALLEL is configured on your Ollama server.
+        concurrency_label = f"concurrency={llm.concurrency}" if llm.concurrency > 1 else "sequential"
+        print(f"Running {len(jobs_to_evaluate)} evaluations [{llm.mode} mode | {concurrency_label}]")
 
-    semaphore = asyncio.Semaphore(llm.concurrency)
+        semaphore = asyncio.Semaphore(llm.concurrency)
 
-    async with httpx.AsyncClient(timeout=120.0) as http_client:
-        async def evaluate_with_limit(job):
-            async with semaphore:
-                return await evaluate_single_job(job, client=http_client)
+        async with httpx.AsyncClient(timeout=120.0) as http_client:
+            async def evaluate_with_limit(job):
+                async with semaphore:
+                    return await evaluate_single_job(job, client=http_client)
 
-        tasks = [evaluate_with_limit(job) for job in jobs_to_evaluate]
-        results = await asyncio.gather(*tasks)
-        processed_jobs.extend(results)
+            tasks = [evaluate_with_limit(job) for job in jobs_to_evaluate]
+            results = await asyncio.gather(*tasks)
+            processed_jobs.extend(results)
 
     # --- TIMING STATS ---
     if processed_jobs:
@@ -467,7 +644,7 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
         total_jobs_saved=total_saved,
         total_ignored=total_ignored,
         source_meta=[{
-            "source": "linkedin",
+            "source": scan_source,
             "total_jobs_scanned": len(jobs),
             "skipped_duplicates": skipped,
             "total_active": total_active,

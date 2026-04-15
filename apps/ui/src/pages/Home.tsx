@@ -338,7 +338,7 @@ function Home() {
                 <div style={{ marginTop: '3rem' }}>
                   <h3 style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.8rem', color: 'var(--text-main)', marginBottom: '1.5rem', letterSpacing: '1px' }}>RAW DESCRIPTION</h3>
                   <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.8', color: '#ccc', fontSize: '1.05rem', fontFamily: 'var(--font-family)' }}>
-                    {selectedJob.description || '[No description text loaded in raw payload.]'}
+                    {selectedJob.description || '[Description unavailable]'}
                   </div>
                 </div>
 

@@ -362,7 +362,8 @@ async def run_ashby_scan(
     skip_ids: set[str],
     pipeline_fn: Callable,
     org_cooldown: float = ORG_COOLDOWN,
-    task_tracker: Optional[Callable] = None,   # optional: fn(task) -> task for shutdown tracking
+    task_tracker: Optional[Callable] = None,    # optional: fn(task) -> task for shutdown tracking
+    fetch_descriptions: bool = True,            # when False: skip Phase 2, all descriptions = None
 ) -> dict:
     """
     Orchestrates a full Ashby scrape across multiple portals.
@@ -370,15 +371,17 @@ async def run_ashby_scan(
     Flow:
       1. Deduplicate portals by org_slug.
       2. Fire all LISTING queries in parallel (semaphore-limited to LISTING_CONCURRENCY).
-      3. For each org that has new postings, fetch descriptions sequentially with adaptive batching.
+      3. For each org that has new postings, fetch descriptions sequentially with adaptive batching
+         (skipped entirely when fetch_descriptions=False — all descriptions will be None).
       4. Fire pipeline immediately per org as a background task.
       5. Wait for all pipeline tasks before returning.
 
     Args:
-        portals:      List of {org_slug, name} dicts.
-        skip_ids:     source_ids already in DB.
-        pipeline_fn:  async (jobs, org_slug) -> dict
-        org_cooldown: Base seconds between description-fetch sessions.
+        portals:            List of {org_slug, name} dicts.
+        skip_ids:           source_ids already in DB.
+        pipeline_fn:        async (jobs, org_slug) -> dict
+        org_cooldown:       Base seconds between description-fetch sessions.
+        fetch_descriptions: When False, Phase 2 is bypassed — descriptions are null.
     """
     # ── Deduplicate ───────────────────────────────────────────────────────────
     seen: set[str] = set()
@@ -446,60 +449,75 @@ async def run_ashby_scan(
         # Descriptions are fetched one org at a time to respect Ashby's rate limits.
         # Pipeline is fired as a background task immediately after each org's descriptions
         # are ready — it runs concurrently with the cooldown and next org's desc fetches.
-        print(f"[Ashby] Phase 2 — fetching descriptions sequentially, firing pipeline per org...")
         pipeline_tasks: list[asyncio.Task] = []
 
-        for idx, (portal, new_postings) in enumerate(orgs_with_new):
-            org_slug = portal["org_slug"]
-            org_name = portal["name"]
+        if not fetch_descriptions:
+            # ── PHASE 2 BYPASSED ───────────────────────────────────────────────
+            # Skip all HTTP description fetches. Map every posting with description=None
+            # and fire the pipeline immediately for each org.
+            print(f"[Ashby] Phase 2 BYPASSED (fetch_descriptions=False) — descriptions will be null")
+            for portal, new_postings in orgs_with_new:
+                org_slug = portal["org_slug"]
+                org_name = portal["name"]
+                jobs = [_map_posting(p, org_slug, org_name, None) for p in new_postings]
+                print(f"[Ashby] '{org_slug}' — {len(jobs)} jobs → pipeline (no descriptions)")
+                task = asyncio.create_task(pipeline_fn(jobs, org_slug))
+                if task_tracker:
+                    task_tracker(task)
+                pipeline_tasks.append(task)
+        else:
+            print(f"[Ashby] Phase 2 — fetching descriptions sequentially, firing pipeline per org...")
+            for idx, (portal, new_postings) in enumerate(orgs_with_new):
+                org_slug = portal["org_slug"]
+                org_name = portal["name"]
 
-            # Adaptive batch desc fetch (reuses shared client)
-            batch_size     = DESC_BATCH_MIN
-            consecutive_ok = 0
-            jobs: list[dict] = []
-            i = 0
-            total = len(new_postings)
+                # Adaptive batch desc fetch (reuses shared client)
+                batch_size     = DESC_BATCH_MIN
+                consecutive_ok = 0
+                jobs: list[dict] = []
+                i = 0
+                total = len(new_postings)
 
-            while i < total:
-                batch = new_postings[i : i + batch_size]
-                batch_no = i // DESC_BATCH_MIN + 1
-                total_est = (total + batch_size - 1) // batch_size
-                print(f"[Ashby] '{org_slug}' — desc batch {batch_no}/{total_est} "
-                      f"({i + len(batch)}/{total}) [bs={batch_size}]")
+                while i < total:
+                    batch = new_postings[i : i + batch_size]
+                    batch_no = i // DESC_BATCH_MIN + 1
+                    total_est = (total + batch_size - 1) // batch_size
+                    print(f"[Ashby] '{org_slug}' — desc batch {batch_no}/{total_est} "
+                          f"({i + len(batch)}/{total}) [bs={batch_size}]")
 
-                descriptions = await asyncio.gather(*[
-                    _fetch_description(client, org_slug, p["id"]) for p in batch
-                ])
+                    descriptions = await asyncio.gather(*[
+                        _fetch_description(client, org_slug, p["id"]) for p in batch
+                    ])
 
-                for posting, description in zip(batch, descriptions):
-                    jobs.append(_map_posting(posting, org_slug, org_name, description))
+                    for posting, description in zip(batch, descriptions):
+                        jobs.append(_map_posting(posting, org_slug, org_name, description))
 
-                none_count = sum(1 for d in descriptions if d is None)
-                if none_count == 0:
-                    consecutive_ok += 1
-                    if consecutive_ok >= 3 and batch_size < DESC_BATCH_MAX:
-                        batch_size += 1
-                        consecutive_ok = 0
-                        print(f"[Ashby] '{org_slug}' — ramping → bs={batch_size}")
-                else:
-                    if batch_size > DESC_BATCH_MIN:
-                        batch_size = DESC_BATCH_MIN
-                        consecutive_ok = 0
-                        print(f"[Ashby] '{org_slug}' — throttle, dropping → bs={batch_size}")
+                    none_count = sum(1 for d in descriptions if d is None)
+                    if none_count == 0:
+                        consecutive_ok += 1
+                        if consecutive_ok >= 3 and batch_size < DESC_BATCH_MAX:
+                            batch_size += 1
+                            consecutive_ok = 0
+                            print(f"[Ashby] '{org_slug}' — ramping → bs={batch_size}")
+                    else:
+                        if batch_size > DESC_BATCH_MIN:
+                            batch_size = DESC_BATCH_MIN
+                            consecutive_ok = 0
+                            print(f"[Ashby] '{org_slug}' — throttle, dropping → bs={batch_size}")
 
-                i += len(batch)
-                if i < total:
-                    await asyncio.sleep(_jitter(DESC_BATCH_DELAY))
+                    i += len(batch)
+                    if i < total:
+                        await asyncio.sleep(_jitter(DESC_BATCH_DELAY))
 
-            print(f"[Ashby] '{org_slug}' — {len(jobs)} new jobs → pipeline")
-            task = asyncio.create_task(pipeline_fn(jobs, org_slug))
-            if task_tracker:
-                task_tracker(task)
-            pipeline_tasks.append(task)
+                print(f"[Ashby] '{org_slug}' — {len(jobs)} new jobs → pipeline")
+                task = asyncio.create_task(pipeline_fn(jobs, org_slug))
+                if task_tracker:
+                    task_tracker(task)
+                pipeline_tasks.append(task)
 
-            # Cooldown with jitter before next org's description session
-            if idx < len(orgs_with_new) - 1:
-                await asyncio.sleep(_jitter(org_cooldown))
+                # Cooldown with jitter before next org's description session
+                if idx < len(orgs_with_new) - 1:
+                    await asyncio.sleep(_jitter(org_cooldown))
 
     # ── Phase 3: Await all pipeline tasks ────────────────────────────────────
     print(f"[Ashby] Waiting for {len(pipeline_tasks)} pipeline task(s) to complete...")

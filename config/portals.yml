@@ -11,7 +11,11 @@ tracked_companies:
   - name: Pinecone
     source: ashby
     org_slug: pinecone
-  #   enabled: true
+    enabled: true
+  - name: Lambda
+    source: ashby
+    org_slug: lambda
+    enabled: true
   # - name: ElevenLabs
   #   source: ashby
   #   org_slug: elevenlabs
