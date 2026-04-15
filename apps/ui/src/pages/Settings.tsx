@@ -5,7 +5,7 @@ import './Settings.css'
 
 interface Portal {
   source: string
-  org_slug: string
+  slug: string
   name: string
   enabled: boolean
 }
@@ -14,9 +14,14 @@ interface AppSettings {
   pipeline: {
     ai_scoring_enabled: boolean
     ashby_description_fetch_enabled: boolean
+    greenhouse_description_fetch_enabled: boolean
   }
   scheduler: {
     ashby: {
+      enabled: boolean
+      interval_minutes: number
+    }
+    greenhouse: {
       enabled: boolean
       interval_minutes: number
     }
@@ -47,7 +52,7 @@ const ASHBY_STEPS: FlowStep[] = [
     sublabel: 'Company registry',
     description: 'Server reads portals.yml to get the list of enabled Ashby org slugs (e.g. "pinecone"). Only companies with enabled: true (default) are targeted.',
     color: 'var(--step-ashby-1)',
-    details: ['config/portals.yml', 'enabled: true filter', 'org_slug extraction'],
+    details: ['config/portals.yml', 'enabled: true filter', 'slug extraction'],
   },
   {
     id: 'ashby-listing',
@@ -96,6 +101,67 @@ const ASHBY_STEPS: FlowStep[] = [
     description: 'Raw Ashby posting fields are mapped to the standard JOBVIS job schema before being handed off to the shared evaluation pipeline.',
     color: 'var(--step-ashby-6)',
     details: ['source: "ashby"', 'source_id · source_url · apply_url', 'workplaceType → Remote/Hybrid/On-site', 'compensationTierSummary → salary_info'],
+  },
+]
+
+// ── Greenhouse-specific ingestion steps ───────────────────────────────────────
+const GREENHOUSE_STEPS: FlowStep[] = [
+  {
+    id: 'gh-portals',
+    icon: '📋',
+    label: 'PORTALS.YML',
+    sublabel: 'Board registry',
+    description: 'Server reads portals.yml to get the list of enabled Greenhouse board tokens (e.g. "amplemarket"). Only companies with enabled: true (default) are targeted.',
+    color: 'var(--step-gh-1)',
+    details: ['config/portals.yml', 'enabled: true filter', 'slug extraction'],
+  },
+  {
+    id: 'gh-listing',
+    icon: '📡',
+    label: 'PHASE 1 — LISTING',
+    sublabel: 'Parallel REST queries',
+    description: 'All board listing queries fire concurrently (up to 3 in parallel) against Greenhouse\'s public REST API. Returns job IDs + brief metadata.',
+    color: 'var(--step-gh-2)',
+    details: ['GET /v1/boards/{token}/jobs', 'LISTING_CONCURRENCY = 3', 'asyncio.gather() all boards', 'id · title · location · updated_at'],
+  },
+  {
+    id: 'gh-dedup',
+    icon: '⊘',
+    label: 'DB SKIP CHECK',
+    sublabel: 'Pre-description dedup',
+    description: 'Before fetching expensive descriptions, the listing is crossed against all known Greenhouse source_ids in the DB. Already-known jobs are dropped — no description fetch wasted.',
+    color: 'var(--step-gh-3)',
+    details: ['DB query: existing Greenhouse source_ids', 'O(1) set lookup', 'Skips known job descriptions'],
+  },
+  {
+    id: 'gh-title',
+    icon: '🔤',
+    label: 'TITLE PRE-FILTER',
+    sublabel: 'Early keyword discard',
+    description: 'Title is checked against filter.yml include/exclude rules before fetching descriptions. Jobs guaranteed to be IGNORED are dropped — saving one HTTP round-trip per job.',
+    color: 'var(--step-gh-4)',
+    details: ['apply_preliminary_filters()', 'Reuses same filter.yml rules', 'No description fetch for IGNORED titles'],
+  },
+  {
+    id: 'gh-desc',
+    icon: '📄',
+    label: 'PHASE 2 — DESCRIPTIONS',
+    sublabel: 'Adaptive batched fetch',
+    description: 'Full descriptions are fetched one board at a time to respect rate limits, but within each board descriptions are fetched in adaptive batches. Batch size starts at 2, ramps up to 5 on success, drops back on any 429.',
+    color: 'var(--step-gh-5)',
+    details: ['GET /v1/boards/{token}/jobs/{id}', 'Batch: min=2, max=5 (adaptive)', '±25% jitter on all delays', 'HTML → plain text strip', 'Exp. backoff on 429 / 5xx'],
+    toggleKey: 'greenhouse_description_fetch_enabled' as keyof AppSettings['pipeline'],
+    toggleLabel: 'Description Fetch',
+    toggleWarning: 'When disabled, Phase 2 is skipped entirely. All Greenhouse jobs are ingested with description: null — no HTTP calls are made per-job. The JD Filter and JD Stripper steps will have nothing to work with downstream.',
+  },
+  {
+    id: 'gh-map',
+    icon: '🗺',
+    label: 'SCHEMA MAPPER',
+    sublabel: 'Normalize to JOBVIS format',
+    description: 'Raw Greenhouse job fields are mapped to the standard JOBVIS job schema before being handed off to the shared evaluation pipeline.',
+    color: 'var(--step-gh-6)',
+    details: ['source: "greenhouse"', 'source_id · source_url · apply_url', 'absolute_url → source_url', 'location.name → location'],
   },
 ]
 
@@ -221,6 +287,16 @@ const PROVIDERS = [
     badge: 'API',
     color: '#7c3aed',
   },
+  {
+    id: 'greenhouse',
+    name: 'Greenhouse',
+    type: 'Server-side API',
+    status: 'active',
+    icon: 'GH',
+    description: "Companies tracked in portals.yml are crawled server-side via Greenhouse's public REST API. No auth required.",
+    badge: 'API',
+    color: '#22c55e',
+  },
 ]
 
 // ─── Scheduler interval options ──────────────────────────────────────────────
@@ -238,22 +314,24 @@ const INTERVAL_OPTIONS = [
 // ─── Scheduler Control Component ─────────────────────────────────────────────
 
 function SchedulerControl({
+  source,
   settings,
   onToggle,
   onInterval,
   saving,
 }: {
+  source: 'ashby' | 'greenhouse'
   settings: AppSettings | null
   onToggle: (enabled: boolean) => void
   onInterval: (minutes: number) => void
   saving: boolean
 }) {
-  const enabled = settings?.scheduler?.ashby?.enabled ?? false
-  const interval = settings?.scheduler?.ashby?.interval_minutes ?? 60
+  const enabled = settings?.scheduler?.[source]?.enabled ?? false
+  const interval = settings?.scheduler?.[source]?.interval_minutes ?? 60
 
   // ── Live timing state (polled from backend every 5s) ─────────────────────
-  const [nextRunAt, setNextRunAt] = useState<number | null>(null)       // epoch ms
-  const [sleepDuration, setSleepDuration] = useState<number | null>(null) // seconds
+  const [nextRunAt, setNextRunAt] = useState<number | null>(null)
+  const [sleepDuration, setSleepDuration] = useState<number | null>(null)
   const [jobRunning, setJobRunning] = useState(false)
 
   // ── Countdown text + progress (ticked locally every second) ──────────────
@@ -271,18 +349,18 @@ function SchedulerControl({
       fetch('http://localhost:8000/api/scheduler/status')
         .then(r => r.json())
         .then(data => {
-          const ashby = data?.tasks?.ashby
-          if (!ashby) return
-          setNextRunAt(ashby.next_run_at ? ashby.next_run_at * 1000 : null)
-          setSleepDuration(ashby.sleep_duration_secs ?? null)
-          setJobRunning(ashby.state === 'running')
+          const task = data?.tasks?.[source]
+          if (!task) return
+          setNextRunAt(task.next_run_at ? task.next_run_at * 1000 : null)
+          setSleepDuration(task.sleep_duration_secs ?? null)
+          setJobRunning(task.state === 'running')
         })
         .catch(() => {})
     }
     poll()
     const id = setInterval(poll, 5000)
     return () => clearInterval(id)
-  }, [enabled])
+  }, [enabled, source])
 
   // Tick every second to compute countdown from local clock (no extra network calls)
   useEffect(() => {
@@ -311,22 +389,20 @@ function SchedulerControl({
   const handleRunNow = async () => {
     setTriggerRunning(true)
     try {
-      await fetch('http://localhost:8000/api/scheduler/trigger/ashby', { method: 'POST' })
-      // Immediately wipe the countdown — it'll repopulate from the next status poll
+      await fetch(`http://localhost:8000/api/scheduler/trigger/${source}`, { method: 'POST' })
       setNextRunAt(null)
       setCountdown('')
       setProgress(0)
       setJobRunning(true)
-      // Poll status after a short delay to get the updated state
       setTimeout(() => {
         fetch('http://localhost:8000/api/scheduler/status')
           .then(r => r.json())
           .then(data => {
-            const ashby = data?.tasks?.ashby
-            if (ashby) {
-              setNextRunAt(ashby.next_run_at ? ashby.next_run_at * 1000 : null)
-              setSleepDuration(ashby.sleep_duration_secs ?? null)
-              setJobRunning(ashby.state === 'running')
+            const task = data?.tasks?.[source]
+            if (task) {
+              setNextRunAt(task.next_run_at ? task.next_run_at * 1000 : null)
+              setSleepDuration(task.sleep_duration_secs ?? null)
+              setJobRunning(task.state === 'running')
             }
           })
           .catch(() => {})
@@ -337,6 +413,8 @@ function SchedulerControl({
       setTriggerRunning(false)
     }
   }
+
+  const stepColor = source === 'greenhouse' ? 'var(--step-gh-5)' : 'var(--step-ashby-5)'
 
   return (
     <div className="scheduler-control">
@@ -353,12 +431,12 @@ function SchedulerControl({
           </div>
         </div>
         <button
-          id="toggle-ashby-scheduler"
+          id={`toggle-${source}-scheduler`}
           className={`toggle-sw ${enabled ? 'toggle-sw--on' : 'toggle-sw--off'}`}
-          style={{ '--step-color': 'var(--step-ashby-5)' } as React.CSSProperties}
+          style={{ '--step-color': stepColor } as React.CSSProperties}
           onClick={() => onToggle(!enabled)}
           disabled={saving}
-          aria-label="Toggle Ashby scheduler"
+          aria-label={`Toggle ${source} scheduler`}
         >
           <span className="toggle-sw-thumb" />
         </button>
@@ -380,7 +458,7 @@ function SchedulerControl({
                   <div className="scheduler-countdown-value">{countdown}</div>
                 </div>
                 <button
-                  id="btn-run-now"
+                  id={`btn-run-now-${source}`}
                   className="run-now-btn"
                   onClick={handleRunNow}
                   disabled={triggerRunning || jobRunning}
@@ -403,7 +481,7 @@ function SchedulerControl({
       {!enabled && (
         <div className="scheduler-manual-block">
           <button
-            id="btn-run-once"
+            id={`btn-run-once-${source}`}
             className="run-now-btn run-now-btn--manual"
             onClick={handleRunNow}
             disabled={triggerRunning}
@@ -421,7 +499,7 @@ function SchedulerControl({
             {INTERVAL_OPTIONS.map(opt => (
               <button
                 key={opt.minutes}
-                id={`interval-${opt.minutes}`}
+                id={`interval-${source}-${opt.minutes}`}
                 className={`interval-btn ${interval === opt.minutes ? 'interval-btn--active' : ''}`}
                 onClick={() => onInterval(opt.minutes)}
                 disabled={saving}
@@ -544,7 +622,7 @@ function splitCsvLine(line: string): string[] {
   return result
 }
 
-function parseAshbySlugsFromCsv(text: string): { org_slug: string; name: string }[] {
+function parseAshbySlugsFromCsv(text: string): { slug: string; name: string }[] {
   const lines = text.split('\n').filter(l => l.trim())
   if (lines.length < 2) return []
 
@@ -554,7 +632,7 @@ function parseAshbySlugsFromCsv(text: string): { org_slug: string; name: string 
   const colIdx = headers.findIndex(h => h.includes('zReHs') || h === 'href')
 
   const seen = new Set<string>()
-  const results: { org_slug: string; name: string }[] = []
+  const results: { slug: string; name: string }[] = []
 
   for (let i = 1; i < lines.length; i++) {
     const cells = splitCsvLine(lines[i])
@@ -572,7 +650,7 @@ function parseAshbySlugsFromCsv(text: string): { org_slug: string; name: string 
         // individual job URLs (/org/uuid), always taking the first segment
         const slug = decodeURIComponent(parts[0]).toLowerCase()
         if (slug.includes(' ')) continue  // URL-encoded spaces = invalid Ashby slug
-        if (!seen.has(slug)) { seen.add(slug); results.push({ org_slug: slug, name: slug }) }
+        if (!seen.has(slug)) { seen.add(slug); results.push({ slug: slug, name: slug }) }
       } catch { /* not a URL */ }
     }
   }
@@ -612,8 +690,8 @@ function AshbyPortalPanel() {
       return
     }
 
-    const existingSlugs = new Set(portals.map(p => p.org_slug))
-    const newEntries = parsed.filter(p => !existingSlugs.has(p.org_slug))
+    const existingSlugs = new Set(portals.map(p => p.slug))
+    const newEntries = parsed.filter(p => !existingSlugs.has(p.slug))
 
     if (newEntries.length === 0) {
       setFeedback(`All ${parsed.length} slug(s) already tracked — nothing to import.`)
@@ -678,9 +756,9 @@ function AshbyPortalPanel() {
       {!loading && portals.length > 0 && (
         <ul className="portal-list">
           {portals.map(p => (
-            <li key={p.org_slug} className={`portal-list-item ${p.enabled ? '' : 'portal-list-item--disabled'}`}>
-              <span className="portal-slug">{p.org_slug}</span>
-              <span className="portal-name">{p.name !== p.org_slug ? p.name : ''}</span>
+            <li key={p.slug} className={`portal-list-item ${p.enabled ? '' : 'portal-list-item--disabled'}`}>
+              <span className="portal-slug">{p.slug}</span>
+              <span className="portal-name">{p.name !== p.slug ? p.name : ''}</span>
               <span className={`portal-enabled-badge ${p.enabled ? 'portal-enabled-badge--on' : 'portal-enabled-badge--off'}`}>
                 {p.enabled ? 'ON' : 'OFF'}
               </span>
@@ -696,18 +774,143 @@ function AshbyPortalPanel() {
   )
 }
 
-// ─── Provider card (expandable for Ashby) ────────────────────────────────────
+// ─── Greenhouse Portal Panel ──────────────────────────────────────────────────
 
-function AshbyProviderCard({ provider }: { provider: typeof PROVIDERS[number] }) {
-  const [open, setOpen] = useState(false)
+function GreenhousePortalPanel() {
+  const [portals, setPortals]         = useState<Portal[]>([])
+  const [loading, setLoading]         = useState(false)
+  const [feedback, setFeedback]       = useState<string | null>(null)
+  const [feedbackErr, setFeedbackErr] = useState(false)
+  const [adding, setAdding]           = useState(false)
+  const [token, setToken]             = useState('')
+  const [name, setName]               = useState('')
+  const [submitting, setSubmitting]   = useState(false)
+
+  const fetchPortals = () => {
+    setLoading(true)
+    fetch('http://localhost:8000/api/portals')
+      .then(r => r.json())
+      .then((data: Portal[]) => setPortals(data.filter(p => p.source === 'greenhouse')))
+      .catch(() => setFeedback('Could not load portals — is the server running?'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { fetchPortals() }, [])
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const t = token.trim().toLowerCase()
+    const n = name.trim()
+    if (!t) return
+    setSubmitting(true)
+    setFeedback(null)
+    try {
+      const res = await fetch('http://localhost:8000/api/portals/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify([{ source: 'greenhouse', slug: t, name: n || t }]),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const result = await res.json()
+      if (result.imported > 0) {
+        setFeedback(`Added: ${t}`)
+        setFeedbackErr(false)
+        setToken('')
+        setName('')
+        setAdding(false)
+        fetchPortals()
+      } else {
+        setFeedback(`'${t}' is already tracked.`)
+        setFeedbackErr(false)
+      }
+    } catch {
+      setFeedback('Import failed — server unreachable.')
+      setFeedbackErr(true)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const active   = portals.filter(p => p.enabled)
+  const disabled = portals.filter(p => !p.enabled)
 
   return (
-    <div className={`provider-card ${provider.id === 'ashby' ? 'provider-card--expandable' : ''}`}
+    <div className="portal-panel">
+      <div className="portal-panel-header">
+        <span className="portal-panel-count">
+          {loading ? 'Loading…' : `${active.length} active · ${disabled.length} disabled`}
+        </span>
+        <div className="portal-panel-actions">
+          <button
+            className="portal-import-btn"
+            onClick={() => { setAdding(a => !a); setFeedback(null) }}
+          >
+            {adding ? '✕ Cancel' : '+ Add board'}
+          </button>
+        </div>
+      </div>
+
+      {adding && (
+        <form className="gh-add-form" onSubmit={handleAdd}>
+          <input
+            className="gh-add-input"
+            placeholder="slug (e.g. amplemarket)"
+            value={token}
+            onChange={e => setToken(e.target.value)}
+            required
+          />
+          <input
+            className="gh-add-input"
+            placeholder="display name (optional)"
+            value={name}
+            onChange={e => setName(e.target.value)}
+          />
+          <button className="portal-import-btn" type="submit" disabled={submitting || !token.trim()}>
+            {submitting ? 'Adding…' : 'Add'}
+          </button>
+        </form>
+      )}
+
+      {feedback && (
+        <div className={`portal-feedback ${feedbackErr ? 'portal-feedback--err' : 'portal-feedback--ok'}`}>
+          {feedback}
+        </div>
+      )}
+
+      {!loading && portals.length > 0 && (
+        <ul className="portal-list">
+          {portals.map(p => (
+            <li key={p.slug} className={`portal-list-item ${p.enabled ? '' : 'portal-list-item--disabled'}`}>
+              <span className="portal-slug">{p.slug}</span>
+              <span className="portal-name">{p.name !== p.slug ? p.name : ''}</span>
+              <span className={`portal-enabled-badge ${p.enabled ? 'portal-enabled-badge--on' : 'portal-enabled-badge--off'}`}>
+                {p.enabled ? 'ON' : 'OFF'}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!loading && portals.length === 0 && (
+        <p className="portal-empty">No Greenhouse portals configured yet.</p>
+      )}
+    </div>
+  )
+}
+
+// ─── Provider card (expandable for Ashby / Greenhouse) ───────────────────────
+
+function ProviderCard({ provider }: { provider: typeof PROVIDERS[number] }) {
+  const [open, setOpen] = useState(false)
+  const expandable = provider.id === 'ashby' || provider.id === 'greenhouse'
+
+  return (
+    <div className={`provider-card ${expandable ? 'provider-card--expandable' : ''}`}
       id={`provider-${provider.id}`}>
       <div
         className="provider-card-top"
-        style={provider.id === 'ashby' ? { cursor: 'pointer' } : undefined}
-        onClick={provider.id === 'ashby' ? () => setOpen(o => !o) : undefined}
+        style={expandable ? { cursor: 'pointer' } : undefined}
+        onClick={expandable ? () => setOpen(o => !o) : undefined}
       >
         <div className="provider-logo" style={{ background: provider.color }}>{provider.icon}</div>
         <div className="provider-info">
@@ -719,13 +922,14 @@ function AshbyProviderCard({ provider }: { provider: typeof PROVIDERS[number] })
           <span className={`provider-status provider-status--${provider.status}`}>
             ● {provider.status.toUpperCase()}
           </span>
-          {provider.id === 'ashby' && (
+          {expandable && (
             <span className="provider-chevron">{open ? '▲' : '▼'}</span>
           )}
         </div>
       </div>
       <p className="provider-desc">{provider.description}</p>
       {provider.id === 'ashby' && open && <AshbyPortalPanel />}
+      {provider.id === 'greenhouse' && open && <GreenhousePortalPanel />}
     </div>
   )
 }
@@ -743,8 +947,11 @@ export default function Settings() {
       .then(r => r.json())
       .then(setSettings)
       .catch(() => setSettings({
-        pipeline: { ai_scoring_enabled: true, ashby_description_fetch_enabled: true },
-        scheduler: { ashby: { enabled: false, interval_minutes: 60 } },
+        pipeline: { ai_scoring_enabled: true, ashby_description_fetch_enabled: true, greenhouse_description_fetch_enabled: true },
+        scheduler: {
+          ashby: { enabled: false, interval_minutes: 60 },
+          greenhouse: { enabled: false, interval_minutes: 60 },
+        },
       }))
   }, [])
 
@@ -770,7 +977,7 @@ export default function Settings() {
     }
   }
 
-  const patchScheduler = async (patch: { enabled?: boolean; interval_minutes?: number }) => {
+  const patchScheduler = async (source: 'ashby' | 'greenhouse', patch: { enabled?: boolean; interval_minutes?: number }) => {
     if (!settings) return
     setSaving(true)
     setSaveError(null)
@@ -778,14 +985,15 @@ export default function Settings() {
     setSettings({
       ...settings,
       scheduler: {
-        ashby: { ...settings.scheduler?.ashby, ...patch } as AppSettings['scheduler']['ashby'],
+        ...settings.scheduler,
+        [source]: { ...settings.scheduler?.[source], ...patch } as AppSettings['scheduler'][typeof source],
       },
     })
     try {
       const res = await fetch('http://localhost:8000/api/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scheduler: { ashby: patch } }),
+        body: JSON.stringify({ scheduler: { [source]: patch } }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       setSettings(await res.json())
@@ -835,6 +1043,12 @@ export default function Settings() {
             <span className="lane-header-sub">Server-side GraphQL scrape</span>
           </div>
           <div className="lane-divider" />
+          <div className="lane-header lane-header--greenhouse">
+            <span className="lane-header-badge gh-badge">API</span>
+            <span className="lane-header-name">Greenhouse</span>
+            <span className="lane-header-sub">Server-side REST scrape</span>
+          </div>
+          <div className="lane-divider" />
           <div className="lane-header lane-header--linkedin">
             <span className="lane-header-badge li-badge">SCRAPER</span>
             <span className="lane-header-name">LinkedIn</span>
@@ -842,13 +1056,14 @@ export default function Settings() {
           </div>
         </div>
 
-        <div className="dual-lane">
+        <div className="tri-lane">
           {/* ── Ashby lane ── */}
           <div className="lane lane--ashby">
             <SchedulerControl
+              source="ashby"
               settings={settings}
-              onToggle={enabled => patchScheduler({ enabled })}
-              onInterval={minutes => patchScheduler({ interval_minutes: minutes })}
+              onToggle={enabled => patchScheduler('ashby', { enabled })}
+              onInterval={minutes => patchScheduler('ashby', { interval_minutes: minutes })}
               saving={saving}
             />
             {ASHBY_STEPS.map((step, i) => (
@@ -863,6 +1078,31 @@ export default function Settings() {
                   saving={saving}
                 />
                 {i < ASHBY_STEPS.length - 1 && <Connector />}
+              </div>
+            ))}
+          </div>
+
+          {/* ── Greenhouse lane ── */}
+          <div className="lane lane--greenhouse">
+            <SchedulerControl
+              source="greenhouse"
+              settings={settings}
+              onToggle={enabled => patchScheduler('greenhouse', { enabled })}
+              onInterval={minutes => patchScheduler('greenhouse', { interval_minutes: minutes })}
+              saving={saving}
+            />
+            {GREENHOUSE_STEPS.map((step, i) => (
+              <div key={step.id}>
+                <PipelineStep
+                  step={step}
+                  index={i}
+                  isOpen={openStep === step.id}
+                  onToggle={() => toggle(step.id)}
+                  settingValue={step.toggleKey ? settings?.pipeline[step.toggleKey] : undefined}
+                  onSettingToggle={step.toggleKey ? (val) => toggleSetting(step.toggleKey!, val) : undefined}
+                  saving={saving}
+                />
+                {i < GREENHOUSE_STEPS.length - 1 && <Connector />}
               </div>
             ))}
           </div>
@@ -937,7 +1177,7 @@ export default function Settings() {
 
         <div className="providers-grid">
           {PROVIDERS.map(p => (
-            <AshbyProviderCard key={p.id} provider={p} />
+            <ProviderCard key={p.id} provider={p} />
           ))}
         </div>
       </section>

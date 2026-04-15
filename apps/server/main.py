@@ -25,6 +25,7 @@ from llm_engine import LLMEngine
 from pipeline.pipeline import JobPipeline
 from mappers import linkedinDataMapper
 from scrapers.ashby import run_ashby_scan, refetch_descriptions
+from scrapers.greenhouse import run_greenhouse_scan
 from pipeline.preprocessors.jd_stripper import strip_jd
 from scheduler import Scheduler
 
@@ -153,6 +154,20 @@ async def startup_event():
         task_tracker=_track_task,
     )
 
+    def _greenhouse_interval_fn() -> float:
+        s = _load_settings()
+        cfg = s.get("scheduler", {}).get("greenhouse", {})
+        if not cfg.get("enabled", False):
+            return 0
+        return cfg.get("interval_minutes", 60) * 60
+
+    job_scheduler.register(
+        name="greenhouse",
+        interval_fn=_greenhouse_interval_fn,
+        job_fn=_execute_greenhouse_scan,
+        task_tracker=_track_task,
+    )
+
 @app.on_event("shutdown")
 async def shutdown_event():
     if not _background_tasks:
@@ -228,12 +243,17 @@ _SETTINGS_DEFAULTS = {
     "pipeline": {
         "ai_scoring_enabled": True,
         "ashby_description_fetch_enabled": True,
+        "greenhouse_description_fetch_enabled": True,
     },
     "scheduler": {
         "ashby": {
             "enabled": False,          # opt-in — must be explicitly enabled
-            "interval_minutes": 60,    # base interval; \u00b11 min jitter applied automatically
-        }
+            "interval_minutes": 60,    # base interval; ±1 min jitter applied automatically
+        },
+        "greenhouse": {
+            "enabled": False,
+            "interval_minutes": 60,
+        },
     },
 }
 
@@ -305,13 +325,19 @@ def get_settings():
 class PipelineSettingsPatch(BaseModel):
     ai_scoring_enabled: Optional[bool] = None
     ashby_description_fetch_enabled: Optional[bool] = None
+    greenhouse_description_fetch_enabled: Optional[bool] = None
 
 class AshbySchedulerPatch(BaseModel):
     enabled: Optional[bool] = None
     interval_minutes: Optional[int] = None
 
+class GreenhouseSchedulerPatch(BaseModel):
+    enabled: Optional[bool] = None
+    interval_minutes: Optional[int] = None
+
 class SchedulerSettingsPatch(BaseModel):
     ashby: Optional[AshbySchedulerPatch] = None
+    greenhouse: Optional[GreenhouseSchedulerPatch] = None
 
 class SettingsPatch(BaseModel):
     pipeline: Optional[PipelineSettingsPatch] = None
@@ -326,6 +352,8 @@ def patch_settings(patch: SettingsPatch):
             current["pipeline"]["ai_scoring_enabled"] = patch.pipeline.ai_scoring_enabled
         if patch.pipeline.ashby_description_fetch_enabled is not None:
             current["pipeline"]["ashby_description_fetch_enabled"] = patch.pipeline.ashby_description_fetch_enabled
+        if patch.pipeline.greenhouse_description_fetch_enabled is not None:
+            current["pipeline"]["greenhouse_description_fetch_enabled"] = patch.pipeline.greenhouse_description_fetch_enabled
     if patch.scheduler is not None:
         sched = current.setdefault("scheduler", {})
         if patch.scheduler.ashby is not None:
@@ -334,6 +362,12 @@ def patch_settings(patch: SettingsPatch):
                 ashby_cfg["enabled"] = patch.scheduler.ashby.enabled
             if patch.scheduler.ashby.interval_minutes is not None:
                 ashby_cfg["interval_minutes"] = patch.scheduler.ashby.interval_minutes
+        if patch.scheduler.greenhouse is not None:
+            gh_cfg = sched.setdefault("greenhouse", dict(_SETTINGS_DEFAULTS["scheduler"]["greenhouse"]))
+            if patch.scheduler.greenhouse.enabled is not None:
+                gh_cfg["enabled"] = patch.scheduler.greenhouse.enabled
+            if patch.scheduler.greenhouse.interval_minutes is not None:
+                gh_cfg["interval_minutes"] = patch.scheduler.greenhouse.interval_minutes
     _save_settings(current)
     logger.info("[Settings] Updated: {}", current)
     return current
@@ -349,7 +383,7 @@ def get_scheduler_status():
     }
 
 
-_VALID_SCHEDULER_JOBS = {"ashby"}
+_VALID_SCHEDULER_JOBS = {"ashby", "greenhouse"}
 
 @app.post("/api/scheduler/trigger/{job_name}")
 async def trigger_scheduler_job(job_name: str):
@@ -367,7 +401,10 @@ async def trigger_scheduler_job(job_name: str):
     if not woken:
         # Scheduler not sleeping (disabled or not yet registered) — fire directly
         logger.info("[Scheduler] /trigger/{} — not active, firing directly", job_name)
-        task = asyncio.create_task(_execute_ashby_scan())
+        if job_name == "greenhouse":
+            task = asyncio.create_task(_execute_greenhouse_scan())
+        else:
+            task = asyncio.create_task(_execute_ashby_scan())
         _track_task(task)
         return {"message": f"'{job_name}' fired directly (scheduler inactive). Timer not reset.", "timer_reset": False}
 
@@ -382,18 +419,18 @@ def list_portals():
     entries = _load_portals(enabled_only=False)  # Show all, not just enabled
     return [
         {
-            "source":   e.get("source"),
-            "org_slug": e.get("org_slug"),
-            "name":     e.get("name"),
-            "enabled":  e.get("enabled", True),
+            "source":      e.get("source"),
+            "slug":        e.get("slug"),
+            "name":        e.get("name"),
+            "enabled":     e.get("enabled", True),
         }
         for e in entries
-        if e.get("source") and e.get("org_slug")  # Skip incomplete entries
+        if e.get("source") and e.get("slug")
     ]
 
 
 class PortalImportEntry(BaseModel):
-    org_slug: str
+    slug: str
     name: str
     source: str = "ashby"
     enabled: bool = True
@@ -402,26 +439,30 @@ class PortalImportEntry(BaseModel):
 def import_portals(entries: List[PortalImportEntry]):
     """
     Bulk-import portals into portals.yml.
-    Skips slugs already present. Appends new entries as YAML text to preserve
-    existing file structure and comments.
+    Skips slugs/tokens already present. Appends new entries as YAML text to
+    preserve existing file structure and comments.
+    Uses the unified slug key for all sources.
     """
     existing = _load_portals(enabled_only=False)
-    existing_slugs = {e.get("org_slug") for e in existing}
+    existing_keys = {e.get("slug") for e in existing} - {None}
 
-    new_entries = [e for e in entries if e.org_slug not in existing_slugs]
+    def _entry_key(e: PortalImportEntry) -> str:
+        return e.slug or ""
+
+    new_entries = [e for e in entries if _entry_key(e) not in existing_keys]
 
     if new_entries:
         with open(PORTALS_PATH, "a") as f:
             for e in new_entries:
                 f.write(f"  - name: {e.name}\n")
                 f.write(f"    source: {e.source}\n")
-                f.write(f"    org_slug: {e.org_slug}\n")
+                f.write(f"    slug: {e.slug}\n")
                 f.write(f"    enabled: {'true' if e.enabled else 'false'}\n")
 
     return {
-        "imported": len(new_entries),
-        "skipped":  len(entries) - len(new_entries),
-        "new_slugs": [e.org_slug for e in new_entries],
+        "imported":   len(new_entries),
+        "skipped":    len(entries) - len(new_entries),
+        "new_tokens": [_entry_key(e) for e in new_entries],
     }
 
 
@@ -434,13 +475,13 @@ async def _execute_ashby_scan(org_slug: Optional[str] = None) -> dict:
     """
     if org_slug:
         all_ashby = _load_portals(source="ashby", enabled_only=False)
-        match = next((e for e in all_ashby if e["org_slug"] == org_slug), None)
-        portals = [{"org_slug": org_slug, "name": match["name"] if match else org_slug}]
+        match = next((e for e in all_ashby if e["slug"] == org_slug), None)
+        portals = [{"slug": org_slug, "name": match["name"] if match else org_slug}]
     else:
         enabled = _load_portals(source="ashby", enabled_only=True)
         if not enabled:
             return {"message": "No enabled Ashby portals in portals.yml.", "total_processed": 0}
-        portals = [{"org_slug": e["org_slug"], "name": e["name"]} for e in enabled]
+        portals = [{"slug": e["slug"], "name": e["name"]} for e in enabled]
 
     _db = next(database.get_db())
     try:
@@ -458,7 +499,7 @@ async def _execute_ashby_scan(org_slug: Optional[str] = None) -> dict:
             total_jobs_scanned=0,
             total_jobs_saved=0,
             total_ignored=0,
-            source_meta=[{"source": "ashby", "orgs": [p["org_slug"] for p in portals]}],
+            source_meta=[{"source": "ashby", "orgs": [p["slug"] for p in portals]}],
         )
         _db.add(scan_session)
         _db.commit()
@@ -506,12 +547,98 @@ async def _execute_ashby_scan(org_slug: Optional[str] = None) -> dict:
 
 
 class AshbyScrapeRequest(BaseModel):
-    org_slug: Optional[str] = None  # specific org, or omit for all enabled portals
+    slug: Optional[str] = None  # specific org slug, or omit for all enabled portals
 
 @app.post("/api/scrape/ashby")
 async def scrape_ashby(request: AshbyScrapeRequest):
     """Triggers server-side Ashby scrape. Reads portals.yml, skips existing DB jobs."""
-    return await _execute_ashby_scan(org_slug=request.org_slug)
+    return await _execute_ashby_scan(org_slug=request.slug)
+
+
+async def _execute_greenhouse_scan(board_token: Optional[str] = None) -> dict:
+    """
+    Core Greenhouse scan logic — shared by the HTTP endpoint and the scheduler.
+    Reads current settings fresh on every call so UI toggles take effect immediately.
+    """
+    if board_token:
+        all_gh = _load_portals(source="greenhouse", enabled_only=False)
+        match = next((e for e in all_gh if e["slug"] == board_token), None)
+        portals = [{"slug": board_token, "name": match["name"] if match else board_token}]
+    else:
+        enabled = _load_portals(source="greenhouse", enabled_only=True)
+        if not enabled:
+            return {"message": "No enabled Greenhouse portals in portals.yml.", "total_processed": 0}
+        portals = [{"slug": e["slug"], "name": e["name"]} for e in enabled]
+
+    _db = next(database.get_db())
+    try:
+        existing_ids: set[str] = {
+            row.source_id
+            for row in _db.query(models.JobPosition.source_id)
+                          .filter(models.JobPosition.source == "greenhouse")
+                          .all()
+            if row.source_id
+        }
+        logger.info("[Greenhouse] {} existing jobs in DB", len(existing_ids))
+
+        scan_session = models.ScanSession(
+            total_jobs_scanned=0,
+            total_jobs_saved=0,
+            total_ignored=0,
+            source_meta=[{"source": "greenhouse", "boards": [p["slug"] for p in portals]}],
+        )
+        _db.add(scan_session)
+        _db.commit()
+        shared_session_id = scan_session.id
+        logger.info("[Greenhouse] Created shared ScanSession {}", shared_session_id)
+    finally:
+        _db.close()
+
+    async def _pipeline(jobs: list[dict], token: str) -> dict:
+        db = next(database.get_db())
+        try:
+            result = await execute_job_pipeline(
+                jobs, db,
+                force_rescan=False,
+                scan_source="greenhouse",
+                session_id=shared_session_id,
+            )
+            result["board"] = token
+            return result
+        finally:
+            db.close()
+
+    settings = _load_settings()
+    scan_result = await run_greenhouse_scan(
+        portals,
+        existing_ids,
+        _pipeline,
+        task_tracker=_track_task,
+        fetch_descriptions=settings.get("pipeline", {}).get("greenhouse_description_fetch_enabled", True),
+    )
+
+    _db = next(database.get_db())
+    try:
+        sess = _db.query(models.ScanSession).filter(models.ScanSession.id == shared_session_id).first()
+        if sess:
+            sess.total_jobs_scanned = scan_result.get("total_scanned", 0)
+            sess.total_jobs_saved   = scan_result.get("total_saved", 0)
+            sess.total_ignored      = scan_result.get("total_ignored", 0)
+            _db.commit()
+    finally:
+        _db.close()
+
+    return scan_result
+
+
+class GreenhouseScrapeRequest(BaseModel):
+    slug: Optional[str] = None  # specific board slug, or omit for all enabled portals
+
+@app.post("/api/scrape/greenhouse")
+async def scrape_greenhouse(request: GreenhouseScrapeRequest):
+    """Triggers server-side Greenhouse scrape. Reads portals.yml, skips existing DB jobs."""
+    return await _execute_greenhouse_scan(board_token=request.slug)
+
 
 # ─── Activity Log Helper ──────────────────────────────────────────────────────
 

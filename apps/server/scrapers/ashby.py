@@ -513,7 +513,7 @@ async def run_ashby_scan(
     Orchestrates a full Ashby scrape across multiple portals.
 
     Flow:
-      1. Deduplicate portals by org_slug.
+      1. Deduplicate portals by slug.
       2. Fire all LISTING queries in parallel (semaphore-limited to LISTING_CONCURRENCY).
       3. For each org that has new postings, fetch descriptions sequentially with adaptive batching
          (skipped entirely when fetch_descriptions=False — all descriptions will be None).
@@ -521,9 +521,9 @@ async def run_ashby_scan(
       5. Wait for all pipeline tasks before returning.
 
     Args:
-        portals:            List of {org_slug, name} dicts.
+        portals:            List of {slug, name} dicts.
         skip_ids:           source_ids already in DB.
-        pipeline_fn:        async (jobs, org_slug) -> dict
+        pipeline_fn:        async (jobs, slug) -> dict
         org_cooldown:       Base seconds between description-fetch sessions.
         fetch_descriptions: When False, Phase 2 is bypassed — descriptions are null.
     """
@@ -531,39 +531,35 @@ async def run_ashby_scan(
     seen: set[str] = set()
     unique: list[dict] = []
     for p in portals:
-        if p["org_slug"] not in seen:
-            seen.add(p["org_slug"])
+        if p["slug"] not in seen:
+            seen.add(p["slug"])
             unique.append(p)
     if len(unique) < len(portals):
         logger.info("[Ashby] Deduplicated {} → {} unique orgs", len(portals), len(unique))
     portals = unique
 
-    logger.info("[Ashby] Starting scan — {} org(s): {}", len(portals), [p['org_slug'] for p in portals])
+    logger.info("[Ashby] Starting scan — {} org(s): {}", len(portals), [p['slug'] for p in portals])
 
     # ── Shared client + rate limiter for all requests in this scan ───────────
-    # The token bucket limits the total request rate across all concurrent
-    # listing + description fetches, preventing the 429 bursts that happen
-    # when many orgs are queued and the semaphore alone isn't enough.
     rate_limiter = _RateLimiter(rate=GLOBAL_RATE_RPS, burst=GLOBAL_BURST)
 
     async with _make_client() as client:
 
         # ── Phase 1: Parallel listing queries ────────────────────────────────
-        # Semaphore limits in-flight count; token bucket paces the actual rate.
         listing_semaphore = asyncio.Semaphore(LISTING_CONCURRENCY)
 
-        failed_orgs: list[str] = []   # org_slugs that exhausted all retries
+        failed_orgs: list[str] = []
 
         async def _fetch_listing(portal: dict) -> tuple[dict, list[dict]]:
             async with listing_semaphore:
-                org_slug = portal["org_slug"]
+                slug = portal["slug"]
                 try:
-                    postings = await _fetch_all_postings(client, org_slug, rate_limiter=rate_limiter)
-                    logger.info("[Ashby] '{}' — {} postings found", org_slug, len(postings))
+                    postings = await _fetch_all_postings(client, slug, rate_limiter=rate_limiter)
+                    logger.info("[Ashby] '{}' — {} postings found", slug, len(postings))
                     return portal, postings
                 except Exception as e:
-                    logger.warning("[Ashby] Listing failed for '{}': {}: {}", org_slug, type(e).__name__, e)
-                    failed_orgs.append(org_slug)
+                    logger.warning("[Ashby] Listing failed for '{}': {}: {}", slug, type(e).__name__, e)
+                    failed_orgs.append(slug)
                     return portal, []
 
         logger.info("[Ashby] Phase 1 — fetching job listings for all {} orgs in parallel...", len(portals))
@@ -576,20 +572,19 @@ async def run_ashby_scan(
         for portal, postings in listing_results:
             new = [p for p in postings if p["id"] not in skip_ids]
             if new:
-                # Title pre-filter before desc fetch — reuses apply_preliminary_filters directly
                 title_ok = [
                     p for p in new
                     if _pipeline.apply_preliminary_filters({"title": p.get("title", "")})[0] == "ACTIVE"
                 ]
                 title_dropped = len(new) - len(title_ok)
                 if title_dropped:
-                    logger.info("[Ashby] '{}' — {} filtered by title before desc fetch", portal['org_slug'], title_dropped)
+                    logger.info("[Ashby] '{}' — {} filtered by title before desc fetch", portal['slug'], title_dropped)
                 if title_ok:
                     orgs_with_new.append((portal, title_ok))
                     continue
             skipped = len(postings) - len(new)
             msg = f"{skipped} already in DB" if skipped else "no postings"
-            logger.info("[Ashby] '{}' → no new jobs ({}), skipping", portal['org_slug'], msg)
+            logger.info("[Ashby] '{}' → no new jobs ({}), skipping", portal['slug'], msg)
 
         if failed_orgs:
             logger.warning("[Ashby] Phase 1 FAILURES ({}/{}): {}", len(failed_orgs), len(portals), failed_orgs)
@@ -602,32 +597,25 @@ async def run_ashby_scan(
             }
 
         # ── Phase 2: Sequential description fetches + immediate pipeline ──────
-        # Descriptions are fetched one org at a time to respect Ashby's rate limits.
-        # Pipeline is fired as a background task immediately after each org's descriptions
-        # are ready — it runs concurrently with the cooldown and next org's desc fetches.
         pipeline_tasks: list[asyncio.Task] = []
 
         if not fetch_descriptions:
-            # ── PHASE 2 BYPASSED ───────────────────────────────────────────────
-            # Skip all HTTP description fetches. Map every posting with description=None
-            # and fire the pipeline immediately for each org.
             logger.info("[Ashby] Phase 2 BYPASSED (fetch_descriptions=False) — descriptions will be null")
             for portal, new_postings in orgs_with_new:
-                org_slug = portal["org_slug"]
+                slug     = portal["slug"]
                 org_name = portal["name"]
-                jobs = [_map_posting(p, org_slug, org_name, None) for p in new_postings]
-                logger.info("[Ashby] '{}' — {} jobs → pipeline (no descriptions)", org_slug, len(jobs))
-                task = asyncio.create_task(pipeline_fn(jobs, org_slug))
+                jobs = [_map_posting(p, slug, org_name, None) for p in new_postings]
+                logger.info("[Ashby] '{}' — {} jobs → pipeline (no descriptions)", slug, len(jobs))
+                task = asyncio.create_task(pipeline_fn(jobs, slug))
                 if task_tracker:
                     task_tracker(task)
                 pipeline_tasks.append(task)
         else:
             logger.info("[Ashby] Phase 2 — fetching descriptions sequentially, firing pipeline per org...")
             for idx, (portal, new_postings) in enumerate(orgs_with_new):
-                org_slug = portal["org_slug"]
+                slug     = portal["slug"]
                 org_name = portal["name"]
 
-                # Adaptive batch desc fetch (reuses shared client)
                 batch_size     = DESC_BATCH_MIN
                 consecutive_ok = 0
                 jobs: list[dict] = []
@@ -638,14 +626,14 @@ async def run_ashby_scan(
                     batch = new_postings[i : i + batch_size]
                     batch_no = i // DESC_BATCH_MIN + 1
                     total_est = (total + batch_size - 1) // batch_size
-                    logger.debug("[Ashby] '{}' — desc batch {}/{} ({}/{}) [bs={}]", org_slug, batch_no, total_est, i + len(batch), total, batch_size)
+                    logger.debug("[Ashby] '{}' — desc batch {}/{} ({}/{}) [bs={}]", slug, batch_no, total_est, i + len(batch), total, batch_size)
 
                     descriptions = await asyncio.gather(*[
-                        _fetch_description(client, org_slug, p["id"], rate_limiter=rate_limiter) for p in batch
+                        _fetch_description(client, slug, p["id"], rate_limiter=rate_limiter) for p in batch
                     ])
 
                     for posting, description in zip(batch, descriptions):
-                        jobs.append(_map_posting(posting, org_slug, org_name, description))
+                        jobs.append(_map_posting(posting, slug, org_name, description))
 
                     none_count = sum(1 for d in descriptions if d is None)
                     if none_count == 0:
@@ -653,24 +641,23 @@ async def run_ashby_scan(
                         if consecutive_ok >= 3 and batch_size < DESC_BATCH_MAX:
                             batch_size += 1
                             consecutive_ok = 0
-                            logger.debug("[Ashby] '{}' — ramping → bs={}", org_slug, batch_size)
+                            logger.debug("[Ashby] '{}' — ramping → bs={}", slug, batch_size)
                     else:
                         if batch_size > DESC_BATCH_MIN:
                             batch_size = DESC_BATCH_MIN
                             consecutive_ok = 0
-                            logger.warning("[Ashby] '{}' — throttle, dropping → bs={}", org_slug, batch_size)
+                            logger.warning("[Ashby] '{}' — throttle, dropping → bs={}", slug, batch_size)
 
                     i += len(batch)
                     if i < total:
                         await asyncio.sleep(_jitter(DESC_BATCH_DELAY))
 
-                logger.info("[Ashby] '{}' — {} new jobs → pipeline", org_slug, len(jobs))
-                task = asyncio.create_task(pipeline_fn(jobs, org_slug))
+                logger.info("[Ashby] '{}' — {} new jobs → pipeline", slug, len(jobs))
+                task = asyncio.create_task(pipeline_fn(jobs, slug))
                 if task_tracker:
                     task_tracker(task)
                 pipeline_tasks.append(task)
 
-                # Cooldown with jitter before next org's description session
                 if idx < len(orgs_with_new) - 1:
                     await asyncio.sleep(_jitter(org_cooldown))
 
