@@ -19,6 +19,7 @@ import asyncio
 import random
 import time
 from typing import Callable, Awaitable, Optional
+from logger import logger
 
 # Jitter window in seconds applied to every interval
 JITTER_SECONDS = 60
@@ -52,7 +53,7 @@ class Scheduler:
                           with the server's shutdown-cancellation set.
         """
         if name in self._tasks and not self._tasks[name].done():
-            print(f"[Scheduler] '{name}' is already registered and running, skipping.")
+            logger.warning("[Scheduler] '{}' is already registered and running, skipping.", name)
             return
 
         # Create (or reset) the trigger event for this job
@@ -65,7 +66,7 @@ class Scheduler:
         self._tasks[name] = task
         if task_tracker:
             task_tracker(task)
-        print(f"[Scheduler] '{name}' registered.")
+        logger.info("[Scheduler] '{}' registered.", name)
 
     async def _run_loop(
         self,
@@ -93,10 +94,7 @@ class Scheduler:
             self._sleep_duration[name] = sleep_secs
             self._job_running[name] = False
 
-            print(
-                f"[Scheduler] '{name}' — sleeping {mins}m{secs:02d}s "
-                f"(base={int(base)}s, jitter={jitter:+.0f}s)"
-            )
+            logger.info("[Scheduler] '{}' — sleeping {}m{:02d}s (base={}s, jitter={:+.0f}s)", name, mins, secs, int(base), jitter)
 
             # Sleep until timer expires OR trigger_now() fires the event
             event = self._trigger_events.get(name)
@@ -106,28 +104,28 @@ class Scheduler:
                 if event:
                     await asyncio.wait_for(event.wait(), timeout=sleep_secs)
                     event.clear()
-                    print(f"[Scheduler] '{name}' — woken early by RUN NOW")
+                    logger.info("[Scheduler] '{}' — woken early by RUN NOW", name)
                 else:
                     await asyncio.sleep(sleep_secs)
             except asyncio.TimeoutError:
                 pass  # normal timer expiry
             except asyncio.CancelledError:
-                print(f"[Scheduler] '{name}' — cancelled during sleep.")
+                logger.info("[Scheduler] '{}' — cancelled during sleep.", name)
                 return
 
             # Mark job as actively running
             self._next_run_at[name] = None
             self._job_running[name] = True
-            print(f"[Scheduler] '{name}' — triggering scheduled run...")
+            logger.info("[Scheduler] '{}' — triggering scheduled run...", name)
             try:
                 await job_fn()
-                print(f"[Scheduler] '{name}' — run complete.")
+                logger.info("[Scheduler] '{}' — run complete.", name)
             except asyncio.CancelledError:
-                print(f"[Scheduler] '{name}' — cancelled during run.")
+                logger.info("[Scheduler] '{}' — cancelled during run.", name)
                 return
             except Exception as e:
                 # Log but keep going — a single failure shouldn't kill the loop
-                print(f"[Scheduler] '{name}' — run failed: {type(e).__name__}: {e}")
+                logger.error("[Scheduler] '{}' — run failed: {}: {}", name, type(e).__name__, e)
             finally:
                 self._job_running[name] = False
 
@@ -140,9 +138,9 @@ class Scheduler:
         event = self._trigger_events.get(name)
         if event:
             event.set()
-            print(f"[Scheduler] '{name}' — trigger_now() called, waking from sleep")
+            logger.info("[Scheduler] '{}' — trigger_now() called, waking from sleep", name)
             return True
-        print(f"[Scheduler] trigger_now('{name}') — job not registered")
+        logger.warning("[Scheduler] trigger_now('{}') — job not registered", name)
         return False
 
     def cancel(self, name: str) -> None:
@@ -156,7 +154,7 @@ class Scheduler:
         for name, task in self._tasks.items():
             if not task.done():
                 task.cancel()
-                print(f"[Scheduler] '{name}' — cancel requested.")
+                logger.info("[Scheduler] '{}' — cancel requested.", name)
         self._tasks.clear()
 
     def status(self) -> dict:

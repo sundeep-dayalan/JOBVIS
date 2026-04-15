@@ -1,6 +1,6 @@
 pipeline:
   ai_scoring_enabled: false
-  ashby_description_fetch_enabled: true
+  ashby_description_fetch_enabled: false
 scheduler:
   ashby:
     enabled: true

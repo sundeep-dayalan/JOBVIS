@@ -16,3 +16,5 @@ Load unpacked extension from:
 `apps/extension`
 
 No extension source code was modified during this reorganization.
+
+jq 'select(.record.message | contains("Listing failed"))' apps/server/logs/jobvis_2026-04-14.log

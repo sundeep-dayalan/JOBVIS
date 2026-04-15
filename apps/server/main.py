@@ -20,10 +20,11 @@ import os
 
 import models
 import database
+from logger import logger
 from llm_engine import LLMEngine
 from pipeline.pipeline import JobPipeline
 from mappers import linkedinDataMapper
-from scrapers.ashby import run_ashby_scan
+from scrapers.ashby import run_ashby_scan, refetch_descriptions
 from pipeline.preprocessors.jd_stripper import strip_jd
 from scheduler import Scheduler
 
@@ -105,7 +106,7 @@ async def websocket_deepscan(websocket: WebSocket):
 
 @app.on_event("startup")
 async def startup_event():
-    print("Initializing Database...")
+    logger.info("[Server] Initializing Database...")
     retries = 5
     while retries > 0:
         try:
@@ -117,21 +118,21 @@ async def startup_event():
                     "activity_log JSONB DEFAULT '[]'::jsonb"
                 ))
                 conn.commit()
-            print("[\u2714] Database connected and initialized gracefully.")
+            logger.info("[Server] Database connected and initialized gracefully.")
             break
         except Exception as e:
-            print(f"Database not ready yet, waiting 3 seconds... ({retries} retries left)")
+            logger.warning("[Server] Database not ready yet, waiting 3 seconds... ({} retries left)", retries)
             await asyncio.sleep(3)
             retries -= 1
 
-    print(f"\nChecking LLM Engine Health ({llm.provider}: {llm.model})...")
+    logger.info("[Server] Checking LLM Engine Health ({}: {})...", llm.provider, llm.model)
     is_alive = await llm.check_health()
     if is_alive:
-        print(f"[\u2714] LLM Engine online - {llm.provider} is responsive.")
+        logger.info("[Server] LLM Engine online - {} is responsive.", llm.provider)
         await llm.preload_model()
     else:
-        print(f"[X] CRITICAL: LLM Engine provider '{llm.provider}' at {llm.url} is DOWN or unreachable.")
-        print("Halting FastAPI application startup as per strict config constraints.")
+        logger.critical("[Server] CRITICAL: LLM Engine provider '{}' at {} is DOWN or unreachable.", llm.provider, llm.url)
+        logger.critical("[Server] Halting FastAPI application startup as per strict config constraints.")
         exit_os._exit(1)
 
     # ── Register scheduled jobs ────────────────────────────────────────────────
@@ -156,12 +157,12 @@ async def startup_event():
 async def shutdown_event():
     if not _background_tasks:
         return
-    print(f"[Server] Shutdown signal — cancelling {len(_background_tasks)} background task(s)...", flush=True)
+    logger.info("[Server] Shutdown signal — cancelling {} background task(s)...", len(_background_tasks))
     await llm.release_model()
     for task in list(_background_tasks):
         task.cancel()
     await asyncio.gather(*list(_background_tasks), return_exceptions=True)
-    print("[Server] All background tasks cancelled.", flush=True)
+    logger.info("[Server] All background tasks cancelled.")
 
 # Allow connections from the Vite React app
 origins = [
@@ -197,17 +198,23 @@ async def receive_rescan(request: RescanRequest, db: Session = Depends(database.
         db_jobs = db.query(models.JobPosition).all()
     else:
         db_jobs = db.query(models.JobPosition).filter(models.JobPosition.id.in_(request.job_ids)).all()
-        
+
     jobs = []
+    logger.info("[jobs] Found {} jobs to rescan", len(db_jobs))
     for row in db_jobs:
         if not row.raw_data:
             continue
-        # The passthrough mapper works for all sources
         jobs.append(linkedinDataMapper(row.raw_data))
-    
+
     if not jobs:
         return {"message": "No valid targets found to rescan", "total_processed": 0, "status": "ignored"}
-        
+
+    # Re-fetch Ashby descriptions when enabled — jobs ingested with fetch disabled have
+    # description=null in raw_data; re-snapshot raw_data after so the upsert persists it.
+    settings = _load_settings()
+    if settings.get("pipeline", {}).get("ashby_description_fetch_enabled", True):
+        await refetch_descriptions(jobs)
+
     return await execute_job_pipeline(jobs, db, force_rescan=True)
 
 
@@ -244,7 +251,7 @@ def _load_settings() -> dict:
                     data[section].setdefault(key, val)
         return data
     except Exception as e:
-        print(f"[Settings] Could not load settings.yml: {e} — using defaults")
+        logger.warning("[Settings] Could not load settings.yml: {} — using defaults", e)
         return dict(_SETTINGS_DEFAULTS)
 
 
@@ -257,7 +264,7 @@ def _save_settings(settings: dict) -> None:
             yaml.dump(settings, f, default_flow_style=False, allow_unicode=True)
         shutil.move(tmp_path, SETTINGS_PATH)
     except Exception as e:
-        print(f"[Settings] Failed to write settings.yml: {e}")
+        logger.error("[Settings] Failed to write settings.yml: {}", e)
         raise
 
 
@@ -276,7 +283,7 @@ def _load_portals(source: Optional[str] = None, enabled_only: bool = True) -> li
         with open(PORTALS_PATH, 'r') as f:
             config = yaml.safe_load(f) or {}
     except Exception as e:
-        print(f"[Portals] Could not load portals.yml: {e}")
+        logger.warning("[Portals] Could not load portals.yml: {}", e)
         return []
 
     entries = config.get('tracked_companies', [])
@@ -328,7 +335,7 @@ def patch_settings(patch: SettingsPatch):
             if patch.scheduler.ashby.interval_minutes is not None:
                 ashby_cfg["interval_minutes"] = patch.scheduler.ashby.interval_minutes
     _save_settings(current)
-    print(f"[Settings] Updated: {current}")
+    logger.info("[Settings] Updated: {}", current)
     return current
 
 
@@ -359,7 +366,7 @@ async def trigger_scheduler_job(job_name: str):
 
     if not woken:
         # Scheduler not sleeping (disabled or not yet registered) — fire directly
-        print(f"[/api/scheduler/trigger/{job_name}] Scheduler not active, firing directly")
+        logger.info("[Scheduler] /trigger/{} — not active, firing directly", job_name)
         task = asyncio.create_task(_execute_ashby_scan())
         _track_task(task)
         return {"message": f"'{job_name}' fired directly (scheduler inactive). Timer not reset.", "timer_reset": False}
@@ -383,6 +390,40 @@ def list_portals():
         for e in entries
         if e.get("source") and e.get("org_slug")  # Skip incomplete entries
     ]
+
+
+class PortalImportEntry(BaseModel):
+    org_slug: str
+    name: str
+    source: str = "ashby"
+    enabled: bool = True
+
+@app.post("/api/portals/import")
+def import_portals(entries: List[PortalImportEntry]):
+    """
+    Bulk-import portals into portals.yml.
+    Skips slugs already present. Appends new entries as YAML text to preserve
+    existing file structure and comments.
+    """
+    existing = _load_portals(enabled_only=False)
+    existing_slugs = {e.get("org_slug") for e in existing}
+
+    new_entries = [e for e in entries if e.org_slug not in existing_slugs]
+
+    if new_entries:
+        with open(PORTALS_PATH, "a") as f:
+            for e in new_entries:
+                f.write(f"  - name: {e.name}\n")
+                f.write(f"    source: {e.source}\n")
+                f.write(f"    org_slug: {e.org_slug}\n")
+                f.write(f"    enabled: {'true' if e.enabled else 'false'}\n")
+
+    return {
+        "imported": len(new_entries),
+        "skipped":  len(entries) - len(new_entries),
+        "new_slugs": [e.org_slug for e in new_entries],
+    }
+
 
 # ─── Server-side scrapers ─────────────────────────────────────────────────────
 
@@ -410,27 +451,58 @@ async def _execute_ashby_scan(org_slug: Optional[str] = None) -> dict:
                           .all()
             if row.source_id
         }
-        print(f"[Ashby] {len(existing_ids)} existing jobs in DB")
+        logger.info("[Ashby] {} existing jobs in DB", len(existing_ids))
+
+        # Create ONE ScanSession for the entire run up-front so all orgs share it.
+        scan_session = models.ScanSession(
+            total_jobs_scanned=0,
+            total_jobs_saved=0,
+            total_ignored=0,
+            source_meta=[{"source": "ashby", "orgs": [p["org_slug"] for p in portals]}],
+        )
+        _db.add(scan_session)
+        _db.commit()
+        shared_session_id = scan_session.id
+        logger.info("[Ashby] Created shared ScanSession {}", shared_session_id)
     finally:
         _db.close()
 
     async def _pipeline(jobs: list[dict], slug: str) -> dict:
         db = next(database.get_db())
         try:
-            result = await execute_job_pipeline(jobs, db, force_rescan=False, scan_source="ashby")
+            result = await execute_job_pipeline(
+                jobs, db,
+                force_rescan=False,
+                scan_source="ashby",
+                session_id=shared_session_id,
+            )
             result["org"] = slug
             return result
         finally:
             db.close()
 
     settings = _load_settings()
-    return await run_ashby_scan(
+    scan_result = await run_ashby_scan(
         portals,
         existing_ids,
         _pipeline,
         task_tracker=_track_task,
         fetch_descriptions=settings.get("pipeline", {}).get("ashby_description_fetch_enabled", True),
     )
+
+    # Update the shared session with aggregate totals from all orgs.
+    _db = next(database.get_db())
+    try:
+        sess = _db.query(models.ScanSession).filter(models.ScanSession.id == shared_session_id).first()
+        if sess:
+            sess.total_jobs_scanned = scan_result.get("total_scanned", 0)
+            sess.total_jobs_saved   = scan_result.get("total_saved", 0)
+            sess.total_ignored      = scan_result.get("total_ignored", 0)
+            _db.commit()
+    finally:
+        _db.close()
+
+    return scan_result
 
 
 class AshbyScrapeRequest(BaseModel):
@@ -466,7 +538,7 @@ def _activity_event(event: str, summary: str, detail: dict = None) -> dict:
     }
 
 
-async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool = False, scan_source: str = "linkedin") -> dict:
+async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool = False, scan_source: str = "linkedin", session_id=None) -> dict:
     start_time = time.time()
     await manager.broadcast({"type": "info", "message": f"INITIATING DEEP SCAN... Received {len(jobs)} jobs."})
     await manager.broadcast({"type": "info", "message": "Applying pipeline deduplication and preliminary keyword filters..."})
@@ -482,11 +554,11 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
     upserts = pipeline_result["upserts"]
     inserts = pipeline_result["inserts"]
     skipped = pipeline_result["skipped"]
-    print(f"Jobs to evaluate count: {len(jobs_to_evaluate)}")
-    print(f"Upserts count: {len(upserts)}")
-    print(f"Inserts count: {len(inserts)}")
-    print(f"Skipped: {skipped}")
-    print(f"AI Scoring enabled: {ai_scoring_enabled}")
+    logger.debug("[Pipeline] jobs_to_evaluate={}", len(jobs_to_evaluate))
+    logger.debug("[Pipeline] upserts={}", len(upserts))
+    logger.debug("[Pipeline] inserts={}", len(inserts))
+    logger.debug("[Pipeline] skipped={}", skipped)
+    logger.debug("[Pipeline] ai_scoring_enabled={}", ai_scoring_enabled)
     
     # Report deductions visually via websocket
     await manager.broadcast({"type": "info", "message": f"DEDUPLICATION: Skipped {skipped} historically active jobs."})
@@ -510,7 +582,7 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
         with open(prompt_path, 'r') as f:
             system_prompt_template = f.read()
     except Exception as e:
-        print(f"Warning: Could not load CV or Prompt: {e}")
+        logger.warning("[Pipeline] Could not load CV or Prompt: {}", e)
             
     # PRE-OPTIMIZATION: Replace CV globally outside the loop so we don't duplicate megabytes of RAM 50 times
     base_system_prompt = system_prompt_template.replace("{{CV_CONTENT}}", cv_content)
@@ -527,7 +599,7 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
         user_prompt = f"TITLE: {title}\nJD: {stripped_jd}\nLOCATION: {job.get('location') or 'Unknown'}"
         
         try:
-            print(f"Evaluating: {title}")
+            logger.info("[AI] Evaluating: {}", title)
             await manager.broadcast({"type": "job_update", "message": f"EVALUATING: {title} | {company}"})
 
             ai_start = time.time()
@@ -542,21 +614,21 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
                 job["ai_score"] = score
                 job["ai_analysis"] = ai_result
 
-                print(f"  -> AI Result retrieved for {title}. Score: {score} ({ai_elapsed_fmt})")
+                logger.info("[AI] Result for {}: score={} ({})", title, score, ai_elapsed_fmt)
                 if score < 2.5:
                     await manager.broadcast({"type": "job_update", "message": f"  -> REJECTED: {title} | Score: {score} | {ai_elapsed_fmt}"})
                     return (job, "IGNORED", f"AI Score {score} < 2.5", ai_elapsed)
                 await manager.broadcast({"type": "job_update", "message": f"  -> PASSED: {title} | Score: {score} | {ai_elapsed_fmt}"})
                 return (job, "ACTIVE", None, ai_elapsed)
             else:
-                print(f"Failed to get JSON from AI for {title} after retries. ({ai_elapsed_fmt})")
+                logger.warning("[AI] Failed to get JSON for {} after retries ({})", title, ai_elapsed_fmt)
                 await manager.broadcast({"type": "job_update", "message": f"  -> FAILED: {title} | Format error limit reached. | {ai_elapsed_fmt}"})
                 job["ai_score"] = None
                 job["ai_analysis"] = {"error": "AI returned invalid format after 3 retries."}
                 return (job, "ACTIVE", None, ai_elapsed)
         except Exception as e:
             ai_elapsed = round(time.time() - ai_start, 2)
-            print(f"Error communicating with AI for {title}: {e}")
+            logger.error("[AI] Error communicating with AI for {}: {}", title, e)
             await manager.broadcast({"type": "job_update", "message": f"  -> CRASH: {title} | Connectivity error."})
             job["ai_score"] = None
             job["ai_analysis"] = {"error": str(e)}
@@ -569,13 +641,13 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
         # Skip LLM entirely. All jobs that made it through keyword filters are
         # treated as ACTIVE with no score. The evaluated_map stays empty so the
         # downstream merge loop just keeps their preliminary status as-is.
-        print("[Pipeline] AI scoring bypassed by settings toggle.")
+        logger.info("[Pipeline] AI scoring bypassed by settings toggle.")
     else:
         # Unified concurrency path for both local and cloud modes.
         # Local Ollama defaults to concurrency=1 (sequential). Set concurrency > 1 in
         # llm_config.yml only if OLLAMA_NUM_PARALLEL is configured on your Ollama server.
         concurrency_label = f"concurrency={llm.concurrency}" if llm.concurrency > 1 else "sequential"
-        print(f"Running {len(jobs_to_evaluate)} evaluations [{llm.mode} mode | {concurrency_label}]")
+        logger.info("[Pipeline] Running {} evaluations [{} mode | {}]", len(jobs_to_evaluate), llm.mode, concurrency_label)
 
         semaphore = asyncio.Semaphore(llm.concurrency)
 
@@ -604,13 +676,9 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
             f"  Average : {_fmt_duration(avg_time)}",
             f"{'─' * 50}",
         ]
-        for line in stats_lines:
-            print(line)
-
-        print("\n  Per-job breakdown:")
-        for i, (title, elapsed) in enumerate(sorted(job_times, key=lambda x: x[1], reverse=True), 1):
-            print(f"  {i:>2}. {_fmt_duration(elapsed):>6}  {title}")
-        print()
+        logger.info("[Pipeline] AI stats:\n{}", "\n".join(stats_lines))
+        per_job = "\n".join(f"  {i:>2}. {_fmt_duration(elapsed):>6}  {title}" for i, (title, elapsed) in enumerate(sorted(job_times, key=lambda x: x[1], reverse=True), 1))
+        logger.debug("[Pipeline] Per-job breakdown:\n{}", per_job)
 
     # Note: `jobs_to_evaluate` contains dictionaries that mutated during `evaluate_single_job`.
     # Let's map LLM mutation results back to the original inserts/upserts arrays based on source_id!
@@ -638,21 +706,25 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
     total_active = len(jobs_to_evaluate)
     total_saved = len(final_inserts) + len(final_upserts)
     
-    # 1) Create the ScanSession first to get a valid UUID
-    scan_session = models.ScanSession(
-        total_jobs_scanned=len(jobs),
-        total_jobs_saved=total_saved,
-        total_ignored=total_ignored,
-        source_meta=[{
-            "source": scan_source,
-            "total_jobs_scanned": len(jobs),
-            "skipped_duplicates": skipped,
-            "total_active": total_active,
-            "total_ignored": total_ignored
-        }]
-    )
-    db.add(scan_session)
-    db.commit() # commit immediately to generate the ID
+    # 1) Use the provided shared session, or create a new one (LinkedIn / single-org path)
+    if session_id is not None:
+        _scan_id = session_id
+    else:
+        scan_session = models.ScanSession(
+            total_jobs_scanned=len(jobs),
+            total_jobs_saved=total_saved,
+            total_ignored=total_ignored,
+            source_meta=[{
+                "source": scan_source,
+                "total_jobs_scanned": len(jobs),
+                "skipped_duplicates": skipped,
+                "total_active": total_active,
+                "total_ignored": total_ignored
+            }]
+        )
+        db.add(scan_session)
+        db.commit()
+        _scan_id = scan_session.id
     
     # 2) Save new jobs (Inserts)
     for job, status, ignore_reason in final_inserts:
@@ -684,7 +756,7 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
             ))
 
         db_job = models.JobPosition(
-            scan_id=scan_session.id,
+            scan_id=_scan_id,
             source=job.get("source"),
             source_id=job.get("source_id"),
             title=job.get("title"),
@@ -720,21 +792,23 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
         existing_logs_map = {}
 
     for job, status, ignore_reason in final_upserts:
+        # Rescan: preserve the existing log as-is — no new history entries for a re-evaluation
         log = list(existing_logs_map.get(job.get("source_id")) or [])
-        log.append(_activity_event(
-            "STATUS_CHANGED",
-            f"Status updated to {status}" + (f" — {ignore_reason}" if ignore_reason else ""),
-            {"new_status": status, "reason": ignore_reason},
-        ))
-        if job.get("ai_score") is not None:
-            score = job["ai_score"]
-            analysis = job.get("ai_analysis") or {}
-            reason = analysis.get("reason", "N/A")
+        if not force_rescan:
             log.append(_activity_event(
-                "AI_EVALUATED",
-                f"Score: {score} — {reason}",
-                {"score": score, "reason": reason},
+                "STATUS_CHANGED",
+                f"Status updated to {status}" + (f" — {ignore_reason}" if ignore_reason else ""),
+                {"new_status": status, "reason": ignore_reason},
             ))
+            if job.get("ai_score") is not None:
+                score = job["ai_score"]
+                analysis = job.get("ai_analysis") or {}
+                reason = analysis.get("reason", "N/A")
+                log.append(_activity_event(
+                    "AI_EVALUATED",
+                    f"Score: {score} — {reason}",
+                    {"score": score, "reason": reason},
+                ))
 
         db.query(models.JobPosition).filter(
             models.JobPosition.source_id == job.get("source_id"),
@@ -754,18 +828,16 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
             models.JobPosition.ai_score: job.get("ai_score"),
             models.JobPosition.ai_analysis: job.get("ai_analysis"),
             models.JobPosition.raw_data: job.get("raw_data"),
-            models.JobPosition.scan_id: scan_session.id,
+            models.JobPosition.scan_id: _scan_id,
             models.JobPosition.activity_log: log,
         })
         
     db.commit()
 
-    # Print exactly what the user wants to console
-    print("\n[✔] request received")
-    print("-" * 30)
-    print(f"Total jobs received and mapped: {len(jobs)}")
-    print(f"Total successfully inserted/upserted into Postgres: {total_saved}")
-    print("-" * 30 + "\n")
+    logger.info("[Pipeline] Request complete")
+    logger.info("[Pipeline] Total jobs received: {}", len(jobs))
+    logger.info("[Pipeline] Saved to DB: {}", total_saved)
+    
     
     total_elapsed = round(time.time() - start_time, 2)
     await manager.broadcast({
@@ -773,7 +845,14 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
         "message": f"DEEP SCAN COMPLETE. Processed {total_saved} database inputs in {_fmt_duration(total_elapsed)}."
     })
     
-    return {"message": "request received", "total_processed": len(jobs), "status": "success"}
+    return {
+        "message": "request received",
+        "total_processed": len(jobs),
+        "total_scanned": len(jobs),
+        "total_saved": total_saved,
+        "total_ignored": total_ignored,
+        "status": "success",
+    }
 
 @app.get("/api/jobs", response_model=List[JobResponse])
 def get_jobs(db: Session = Depends(database.get_db)):

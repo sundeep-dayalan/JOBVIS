@@ -16,118 +16,467 @@ tracked_companies:
     source: ashby
     org_slug: lambda
     enabled: true
-  # - name: ElevenLabs
-  #   source: ashby
-  #   org_slug: elevenlabs
-  #   enabled: true
-  # - name: Deepgram
-  #   source: ashby
-  #   org_slug: deepgram
-  #   enabled: true
-  # - name: Vapi
-  #   source: ashby
-  #   org_slug: vapi
-  #   enabled: true
-  # - name: Bland AI
-  #   source: ashby
-  #   org_slug: bland
-  #   enabled: true
-  # - name: Sierra
-  #   source: ashby
-  #   org_slug: sierra
-  #   enabled: true
-  # - name: Decagon
-  #   source: ashby
-  #   org_slug: decagon
-  #   enabled: true
-  # - name: Lindy
-  #   source: ashby
-  #   org_slug: lindy
-  #   enabled: true
-  # - name: n8n
-  #   source: ashby
-  #   org_slug: n8n
-  #   enabled: true
-  # - name: Zapier
-  #   source: ashby
-  #   org_slug: zapier
-  #   enabled: true
-  # - name: Cohere
-  #   source: ashby
-  #   org_slug: cohere
-  #   enabled: true
-  # - name: LangChain
-  #   source: ashby
-  #   org_slug: langchain
-  #   enabled: true
-  # - name: Pinecone
-  #   source: ashby
-  #   org_slug: pinecone
-  #   enabled: true
-  # - name: Attio
-  #   source: ashby
-  #   org_slug: attio
-  #   enabled: true
-  # - name: Tinybird
-  #   source: ashby
-  #   org_slug: tinybird
-  #   enabled: true
-  # - name: Travelperk
-  #   source: ashby
-  #   org_slug: travelperk
-  #   enabled: true
-  # - name: Lovable
-  #   source: ashby
-  #   org_slug: lovable
-  #   enabled: true
-  # - name: Legora
-  #   source: ashby
-  #   org_slug: legora
-  #   enabled: true
-  # - name: Perplexity
-  #   source: ashby
-  #   org_slug: perplexity
-  #   enabled: true
-  # - name: Clay Labs
-  #   source: ashby
-  #   org_slug: claylabs
-  #   enabled: true
-  # - name: WorkOS
-  #   source: ashby
-  #   org_slug: workos
-  #   enabled: true
-  # - name: Supabase
-  #   source: ashby
-  #   org_slug: supabase
-  #   enabled: true
-  # - name: Resend
-  #   source: ashby
-  #   org_slug: resend
-  #   enabled: true
-  # - name: Clerk
-  #   source: ashby
-  #   org_slug: clerk
-  #   enabled: true
-  # - name: Inngest
-  #   source: ashby
-  #   org_slug: inngest
-  #   enabled: true
-  # - name: Linear
-  #   source: ashby
-  #   org_slug: linear
-  #   enabled: true
-  # - name: OpenAI
-  #   source: ashby
-  #   org_slug: openai
-  #   enabled: true
-  # - name: Aetherflux
-  #   source: ashby
-  #   org_slug: aetherflux
-  #   enabled: true
-
-  # ── Greenhouse ──────────────────────────────────────────────────────────────
-  # Placeholder for future server-side Greenhouse scraper
-  # - name: Anthropic
-  #   source: greenhouse
-  #   board_token: anthropic   # The token in: boards.greenhouse.io/<board_token>
-  #   enabled: false
+  - name: ElevenLabs
+    source: ashby
+    org_slug: elevenlabs
+    enabled: true
+  - name: Deepgram
+    source: ashby
+    org_slug: deepgram
+    enabled: true
+  - name: Vapi
+    source: ashby
+    org_slug: vapi
+    enabled: true
+  - name: Bland AI
+    source: ashby
+    org_slug: bland
+    enabled: true
+  - name: Sierra
+    source: ashby
+    org_slug: sierra
+    enabled: true
+  - name: Decagon
+    source: ashby
+    org_slug: decagon
+    enabled: true
+  - name: Lindy
+    source: ashby
+    org_slug: lindy
+    enabled: true
+  - name: n8n
+    source: ashby
+    org_slug: n8n
+    enabled: true
+  - name: Zapier
+    source: ashby
+    org_slug: zapier
+    enabled: true
+  - name: Cohere
+    source: ashby
+    org_slug: cohere
+    enabled: true
+  - name: LangChain
+    source: ashby
+    org_slug: langchain
+    enabled: true
+  - name: Pinecone
+    source: ashby
+    org_slug: pinecone
+    enabled: true
+  - name: Attio
+    source: ashby
+    org_slug: attio
+    enabled: true
+  - name: Tinybird
+    source: ashby
+    org_slug: tinybird
+    enabled: true
+  - name: Travelperk
+    source: ashby
+    org_slug: travelperk
+    enabled: true
+  - name: Lovable
+    source: ashby
+    org_slug: lovable
+    enabled: true
+  - name: Legora
+    source: ashby
+    org_slug: legora
+    enabled: true
+  - name: Perplexity
+    source: ashby
+    org_slug: perplexity
+    enabled: true
+  - name: Clay Labs
+    source: ashby
+    org_slug: claylabs
+    enabled: true
+  - name: WorkOS
+    source: ashby
+    org_slug: workos
+    enabled: true
+  - name: Supabase
+    source: ashby
+    org_slug: supabase
+    enabled: true
+  - name: Resend
+    source: ashby
+    org_slug: resend
+    enabled: true
+  - name: Clerk
+    source: ashby
+    org_slug: clerk
+    enabled: true
+  - name: Inngest
+    source: ashby
+    org_slug: inngest
+    enabled: true
+  - name: Linear
+    source: ashby
+    org_slug: linear
+    enabled: true
+  - name: OpenAI
+    source: ashby
+    org_slug: openai
+    enabled: true
+  - name: Aetherflux
+    source: ashby
+    org_slug: aetherflux
+    enabled: true
+  - name: WA.Technology
+    source: ashby
+    org_slug: WA.Technology
+    enabled: true
+  - name: sesame
+    source: ashby
+    org_slug: sesame
+    enabled: true
+  - name: summation
+    source: ashby
+    org_slug: summation
+    enabled: true
+  - name: Axel
+    source: ashby
+    org_slug: Axel
+    enabled: true
+  - name: brinc
+    source: ashby
+    org_slug: brinc
+    enabled: true
+  - name: echomark
+    source: ashby
+    org_slug: echomark
+    enabled: true
+  - name: haus
+    source: ashby
+    org_slug: haus
+    enabled: true
+  - name: ScribdInc
+    source: ashby
+    org_slug: ScribdInc
+    enabled: true
+  - name: docker
+    source: ashby
+    org_slug: docker
+    enabled: true
+  - name: ramp
+    source: ashby
+    org_slug: ramp
+    enabled: true
+  - name: sailorhealth
+    source: ashby
+    org_slug: sailorhealth
+    enabled: true
+  - name: renuity
+    source: ashby
+    org_slug: renuity
+    enabled: true
+  - name: helion
+    source: ashby
+    org_slug: helion
+    enabled: true
+  - name: reflectionai
+    source: ashby
+    org_slug: reflectionai
+    enabled: true
+  - name: whatnot
+    source: ashby
+    org_slug: whatnot
+    enabled: true
+  - name: oumi
+    source: ashby
+    org_slug: oumi
+    enabled: true
+  - name: sleeper
+    source: ashby
+    org_slug: sleeper
+    enabled: true
+  - name: GovSignals
+    source: ashby
+    org_slug: GovSignals
+    enabled: true
+  - name: method.security
+    source: ashby
+    org_slug: method.security
+    enabled: true
+  - name: cohere
+    source: ashby
+    org_slug: cohere
+    enabled: true
+  - name: Swoop
+    source: ashby
+    org_slug: Swoop
+    enabled: true
+  - name: 2ndwave
+    source: ashby
+    org_slug: 2ndwave
+    enabled: true
+  - name: evenup
+    source: ashby
+    org_slug: evenup
+    enabled: true
+  - name: Union
+    source: ashby
+    org_slug: Union
+    enabled: true
+  - name: prorata
+    source: ashby
+    org_slug: prorata
+    enabled: true
+  - name: hopper
+    source: ashby
+    org_slug: hopper
+    enabled: true
+  - name: equip
+    source: ashby
+    org_slug: equip
+    enabled: true
+  - name: riveron
+    source: ashby
+    org_slug: riveron
+    enabled: true
+  - name: gallatin
+    source: ashby
+    org_slug: gallatin
+    enabled: true
+  - name: Crusoe
+    source: ashby
+    org_slug: Crusoe
+    enabled: true
+  - name: Redis
+    source: ashby
+    org_slug: Redis
+    enabled: true
+  - name: g2i
+    source: ashby
+    org_slug: g2i
+    enabled: true
+  - name: method
+    source: ashby
+    org_slug: method
+    enabled: true
+  - name: openai
+    source: ashby
+    org_slug: openai
+    enabled: true
+  - name: directive
+    source: ashby
+    org_slug: directive
+    enabled: true
+  - name: crusoe
+    source: ashby
+    org_slug: crusoe
+    enabled: true
+  - name: spear-ai
+    source: ashby
+    org_slug: spear-ai
+    enabled: true
+  - name: hackerone
+    source: ashby
+    org_slug: hackerone
+    enabled: true
+  - name: aetherflux
+    source: ashby
+    org_slug: aetherflux
+    enabled: true
+  - name: statsig
+    source: ashby
+    org_slug: statsig
+    enabled: true
+  - name: CARIAN
+    source: ashby
+    org_slug: CARIAN
+    enabled: true
+  - name: talkiatry
+    source: ashby
+    org_slug: talkiatry
+    enabled: true
+  - name: range
+    source: ashby
+    org_slug: range
+    enabled: true
+  - name: spoton
+    source: ashby
+    org_slug: spoton
+    enabled: true
+  - name: twenty
+    source: ashby
+    org_slug: twenty
+    enabled: true
+  - name: remo
+    source: ashby
+    org_slug: remo
+    enabled: true
+  - name: ridealso
+    source: ashby
+    org_slug: ridealso
+    enabled: true
+  - name: Flock%20Safety
+    source: ashby
+    org_slug: Flock%20Safety
+    enabled: true
+  - name: curri
+    source: ashby
+    org_slug: curri
+    enabled: true
+  - name: hadrian-automation
+    source: ashby
+    org_slug: hadrian-automation
+    enabled: true
+  - name: vultr
+    source: ashby
+    org_slug: vultr
+    enabled: true
+  - name: hellobrightline
+    source: ashby
+    org_slug: hellobrightline
+    enabled: true
+  - name: stony%20creek%20homes
+    source: ashby
+    org_slug: stony%20creek%20homes
+    enabled: true
+  - name: handspring
+    source: ashby
+    org_slug: handspring
+    enabled: true
+  - name: cape
+    source: ashby
+    org_slug: cape
+    enabled: true
+  - name: trm-labs
+    source: ashby
+    org_slug: trm-labs
+    enabled: true
+  - name: cobot
+    source: ashby
+    org_slug: cobot
+    enabled: true
+  - name: casium
+    source: ashby
+    org_slug: casium
+    enabled: true
+  - name: 3y-health
+    source: ashby
+    org_slug: 3y-health
+    enabled: true
+  - name: point-one-navigation
+    source: ashby
+    org_slug: point-one-navigation
+    enabled: true
+  - name: rowan
+    source: ashby
+    org_slug: rowan
+    enabled: true
+  - name: airspace-intelligence.com
+    source: ashby
+    org_slug: airspace-intelligence.com
+    enabled: true
+  - name: real
+    source: ashby
+    org_slug: real
+    enabled: true
+  - name: conductorai
+    source: ashby
+    org_slug: conductorai
+    enabled: true
+  - name: mariner-careers
+    source: ashby
+    org_slug: mariner-careers
+    enabled: true
+  - name: radiant-industries
+    source: ashby
+    org_slug: radiant-industries
+    enabled: true
+  - name: Promise
+    source: ashby
+    org_slug: Promise
+    enabled: true
+  - name: binti
+    source: ashby
+    org_slug: binti
+    enabled: true
+  - name: niantic-spatial
+    source: ashby
+    org_slug: niantic-spatial
+    enabled: true
+  - name: positive-development
+    source: ashby
+    org_slug: positive-development
+    enabled: true
+  - name: Cape
+    source: ashby
+    org_slug: Cape
+    enabled: true
+  - name: easyllama.com
+    source: ashby
+    org_slug: easyllama.com
+    enabled: true
+  - name: union
+    source: ashby
+    org_slug: union
+    enabled: true
+  - name: Vori
+    source: ashby
+    org_slug: Vori
+    enabled: true
+  - name: Edgesource%20Corporation
+    source: ashby
+    org_slug: Edgesource%20Corporation
+    enabled: true
+  - name: expa
+    source: ashby
+    org_slug: expa
+    enabled: true
+  - name: coefficientgiving
+    source: ashby
+    org_slug: coefficientgiving
+    enabled: true
+  - name: Stony%20Creek%20Homes
+    source: ashby
+    org_slug: Stony%20Creek%20Homes
+    enabled: true
+  - name: finni-health
+    source: ashby
+    org_slug: finni-health
+    enabled: true
+  - name: Lambda
+    source: ashby
+    org_slug: Lambda
+    enabled: true
+  - name: a-place-for-mom
+    source: ashby
+    org_slug: a-place-for-mom
+    enabled: true
+  - name: promise
+    source: ashby
+    org_slug: promise
+    enabled: true
+  - name: abridge
+    source: ashby
+    org_slug: abridge
+    enabled: true
+  - name: careers.azx.io
+    source: ashby
+    org_slug: careers.azx.io
+    enabled: true
+  - name: avid4
+    source: ashby
+    org_slug: avid4
+    enabled: true
+  - name: element84
+    source: ashby
+    org_slug: element84
+    enabled: true
+  - name: mebe
+    source: ashby
+    org_slug: mebe
+    enabled: true
+  - name: sondermind
+    source: ashby
+    org_slug: sondermind
+    enabled: true
+  - name: shortstory
+    source: ashby
+    org_slug: shortstory
+    enabled: true

@@ -1,7 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import './Settings.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+interface Portal {
+  source: string
+  org_slug: string
+  name: string
+  enabled: boolean
+}
 
 interface AppSettings {
   pipeline: {
@@ -522,6 +529,207 @@ function Connector({ label }: { label?: string }) {
   )
 }
 
+// ─── Ashby Portal Panel ───────────────────────────────────────────────────────
+
+function splitCsvLine(line: string): string[] {
+  const result: string[] = []
+  let current = ''
+  let inQuotes = false
+  for (const ch of line) {
+    if (ch === '"') { inQuotes = !inQuotes }
+    else if (ch === ',' && !inQuotes) { result.push(current); current = '' }
+    else { current += ch }
+  }
+  result.push(current)
+  return result
+}
+
+function parseAshbySlugsFromCsv(text: string): { org_slug: string; name: string }[] {
+  const lines = text.split('\n').filter(l => l.trim())
+  if (lines.length < 2) return []
+
+  const headers = splitCsvLine(lines[0]).map(h => h.trim().replace(/^"|"$/g, ''))
+
+  // Find column containing "zReHs href" (exact or partial match)
+  const colIdx = headers.findIndex(h => h.includes('zReHs') || h === 'href')
+
+  const seen = new Set<string>()
+  const results: { org_slug: string; name: string }[] = []
+
+  for (let i = 1; i < lines.length; i++) {
+    const cells = splitCsvLine(lines[i])
+    // If we found a specific column use it, otherwise scan all cells
+    const candidates = colIdx >= 0 ? [cells[colIdx]] : cells
+
+    for (const cell of candidates) {
+      const raw = (cell ?? '').trim().replace(/^"|"$/g, '')
+      try {
+        const u = new URL(raw)
+        if (u.hostname !== 'jobs.ashbyhq.com') continue
+        const parts = u.pathname.split('/').filter(Boolean)
+        if (parts.length === 0) continue
+        // Decode %20 etc, lowercase for dedup — works for company URLs and
+        // individual job URLs (/org/uuid), always taking the first segment
+        const slug = decodeURIComponent(parts[0]).toLowerCase()
+        if (slug.includes(' ')) continue  // URL-encoded spaces = invalid Ashby slug
+        if (!seen.has(slug)) { seen.add(slug); results.push({ org_slug: slug, name: slug }) }
+      } catch { /* not a URL */ }
+    }
+  }
+  return results
+}
+
+function AshbyPortalPanel() {
+  const [portals, setPortals]           = useState<Portal[]>([])
+  const [loading, setLoading]           = useState(false)
+  const [feedback, setFeedback]         = useState<string | null>(null)
+  const [feedbackErr, setFeedbackErr]   = useState(false)
+  const [importing, setImporting]       = useState(false)
+  const fileInputRef                    = useRef<HTMLInputElement>(null)
+
+  const fetchPortals = () => {
+    setLoading(true)
+    fetch('http://localhost:8000/api/portals')
+      .then(r => r.json())
+      .then((data: Portal[]) => setPortals(data.filter(p => p.source === 'ashby')))
+      .catch(() => setFeedback('Could not load portals — is the server running?'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { fetchPortals() }, [])
+
+  const handleCsvFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''   // reset so same file can be re-selected
+
+    const text = await file.text()
+    const parsed = parseAshbySlugsFromCsv(text)
+
+    if (parsed.length === 0) {
+      setFeedback('No Ashby URLs found — make sure the CSV has a "zReHs href" column.')
+      setFeedbackErr(true)
+      return
+    }
+
+    const existingSlugs = new Set(portals.map(p => p.org_slug))
+    const newEntries = parsed.filter(p => !existingSlugs.has(p.org_slug))
+
+    if (newEntries.length === 0) {
+      setFeedback(`All ${parsed.length} slug(s) already tracked — nothing to import.`)
+      setFeedbackErr(false)
+      return
+    }
+
+    setImporting(true)
+    setFeedback(null)
+    try {
+      const res = await fetch('http://localhost:8000/api/portals/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newEntries),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const result = await res.json()
+      setFeedback(`Imported ${result.imported} new portal(s), skipped ${result.skipped} duplicate(s).`)
+      setFeedbackErr(false)
+      fetchPortals()   // refresh list
+    } catch {
+      setFeedback('Import failed — server unreachable.')
+      setFeedbackErr(true)
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const ashby = portals.filter(p => p.enabled)
+  const disabled = portals.filter(p => !p.enabled)
+
+  return (
+    <div className="portal-panel">
+      <div className="portal-panel-header">
+        <span className="portal-panel-count">
+          {loading ? 'Loading…' : `${ashby.length} active · ${disabled.length} disabled`}
+        </span>
+        <div className="portal-panel-actions">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv"
+            style={{ display: 'none' }}
+            onChange={handleCsvFile}
+          />
+          <button
+            className="portal-import-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importing}
+          >
+            {importing ? 'Importing…' : '⬆ Import from CSV'}
+          </button>
+        </div>
+      </div>
+
+      {feedback && (
+        <div className={`portal-feedback ${feedbackErr ? 'portal-feedback--err' : 'portal-feedback--ok'}`}>
+          {feedback}
+        </div>
+      )}
+
+      {!loading && portals.length > 0 && (
+        <ul className="portal-list">
+          {portals.map(p => (
+            <li key={p.org_slug} className={`portal-list-item ${p.enabled ? '' : 'portal-list-item--disabled'}`}>
+              <span className="portal-slug">{p.org_slug}</span>
+              <span className="portal-name">{p.name !== p.org_slug ? p.name : ''}</span>
+              <span className={`portal-enabled-badge ${p.enabled ? 'portal-enabled-badge--on' : 'portal-enabled-badge--off'}`}>
+                {p.enabled ? 'ON' : 'OFF'}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!loading && portals.length === 0 && (
+        <p className="portal-empty">No Ashby portals configured yet.</p>
+      )}
+    </div>
+  )
+}
+
+// ─── Provider card (expandable for Ashby) ────────────────────────────────────
+
+function AshbyProviderCard({ provider }: { provider: typeof PROVIDERS[number] }) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div className={`provider-card ${provider.id === 'ashby' ? 'provider-card--expandable' : ''}`}
+      id={`provider-${provider.id}`}>
+      <div
+        className="provider-card-top"
+        style={provider.id === 'ashby' ? { cursor: 'pointer' } : undefined}
+        onClick={provider.id === 'ashby' ? () => setOpen(o => !o) : undefined}
+      >
+        <div className="provider-logo" style={{ background: provider.color }}>{provider.icon}</div>
+        <div className="provider-info">
+          <div className="provider-name">{provider.name}</div>
+          <div className="provider-type">{provider.type}</div>
+        </div>
+        <div className="provider-badges">
+          <span className="provider-badge-type">{provider.badge}</span>
+          <span className={`provider-status provider-status--${provider.status}`}>
+            ● {provider.status.toUpperCase()}
+          </span>
+          {provider.id === 'ashby' && (
+            <span className="provider-chevron">{open ? '▲' : '▼'}</span>
+          )}
+        </div>
+      </div>
+      <p className="provider-desc">{provider.description}</p>
+      {provider.id === 'ashby' && open && <AshbyPortalPanel />}
+    </div>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function Settings() {
@@ -729,22 +937,7 @@ export default function Settings() {
 
         <div className="providers-grid">
           {PROVIDERS.map(p => (
-            <div key={p.id} className="provider-card" id={`provider-${p.id}`}>
-              <div className="provider-card-top">
-                <div className="provider-logo" style={{ background: p.color }}>{p.icon}</div>
-                <div className="provider-info">
-                  <div className="provider-name">{p.name}</div>
-                  <div className="provider-type">{p.type}</div>
-                </div>
-                <div className="provider-badges">
-                  <span className="provider-badge-type">{p.badge}</span>
-                  <span className={`provider-status provider-status--${p.status}`}>
-                    ● {p.status.toUpperCase()}
-                  </span>
-                </div>
-              </div>
-              <p className="provider-desc">{p.description}</p>
-            </div>
+            <AshbyProviderCard key={p.id} provider={p} />
           ))}
         </div>
       </section>

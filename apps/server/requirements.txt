@@ -5,3 +5,4 @@ httpx
 pyyaml
 sqlalchemy
 psycopg2-binary
+loguru
