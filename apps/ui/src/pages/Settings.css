@@ -19,6 +19,13 @@
   --step-gh-5: #15803d;
   --step-gh-6: #166534;
 
+  /* Lever lane colors */
+  --step-lever-1: #fdba74;
+  --step-lever-2: #fb923c;
+  --step-lever-3: #f97316;
+  --step-lever-4: #ea580c;
+  --step-lever-5: #c2410c;
+
   /* LinkedIn lane colors */
   --step-li-1: #38bdf8;
   --step-li-2: #0ea5e9;
@@ -139,15 +146,7 @@
   max-width: 700px;
 }
 
-/* ── Ingestion lane headers ──────────────────── */
-
-.ingestion-label-row {
-  display: grid;
-  grid-template-columns: 1fr 1px 1fr 1px 1fr;
-  gap: 0;
-  margin-bottom: 1rem;
-  align-items: stretch;
-}
+/* ── Lane headers (rendered inside each lane — guaranteed alignment) ── */
 
 .lane-header {
   display: flex;
@@ -155,7 +154,9 @@
   align-items: center;
   gap: 0.3rem;
   padding: 0.8rem 1rem;
-  border: 1px solid var(--border-color);
+  width: 100%;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 0.8rem;
 }
 
 .lane-header--ashby {
@@ -198,6 +199,17 @@
   color: #4ade80;
 }
 
+.lever-badge {
+  background: rgba(249,115,22,0.15);
+  border: 1px solid rgba(249,115,22,0.35);
+  color: #fb923c;
+}
+
+.lane-header--lever {
+  border-color: rgba(249,115,22,0.3);
+  background: rgba(249,115,22,0.04);
+}
+
 .li-badge {
   background: rgba(56,189,248,0.15);
   border: 1px solid rgba(56,189,248,0.35);
@@ -223,12 +235,18 @@
 .tri-lane {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
+}
+
+/* ── Four-lane layout (Ashby · Greenhouse · Lever · LinkedIn) ── */
+.quad-lane {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
   gap: 0;
   border: 1px solid var(--border-color);
 }
 
 .lane {
-  padding: 1.2rem 1rem;
+  padding: 0 1rem 1.2rem;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -468,6 +486,11 @@
 .lane--greenhouse {
   border-right: 1px solid var(--border-color);
   background: rgba(34,197,94,0.02);
+}
+
+.lane--lever {
+  border-right: 1px solid var(--border-color);
+  background: rgba(249,115,22,0.02);
 }
 
 .lane--linkedin {

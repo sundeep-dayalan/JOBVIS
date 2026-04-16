@@ -1,5 +1,5 @@
 pipeline:
-  ai_scoring_enabled: true
+  ai_scoring_enabled: false
   ashby_description_fetch_enabled: false
   greenhouse_description_fetch_enabled: false
 scheduler:
@@ -8,4 +8,7 @@ scheduler:
     interval_minutes: 15
   greenhouse:
     enabled: false
+    interval_minutes: 15
+  lever:
+    enabled: true
     interval_minutes: 15

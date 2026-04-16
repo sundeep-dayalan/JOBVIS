@@ -26,6 +26,7 @@ from pipeline.pipeline import JobPipeline
 from mappers import linkedinDataMapper
 from scrapers.ashby import run_ashby_scan, refetch_descriptions
 from scrapers.greenhouse import run_greenhouse_scan
+from scrapers.lever import run_lever_scan
 from pipeline.preprocessors.jd_stripper import strip_jd
 from scheduler import Scheduler
 
@@ -169,6 +170,20 @@ async def startup_event():
         task_tracker=_track_task,
     )
 
+    def _lever_interval_fn() -> float:
+        s = _load_settings()
+        cfg = s.get("scheduler", {}).get("lever", {})
+        if not cfg.get("enabled", False):
+            return 0
+        return cfg.get("interval_minutes", 60) * 60
+
+    job_scheduler.register(
+        name="lever",
+        interval_fn=_lever_interval_fn,
+        job_fn=_execute_lever_scan,
+        task_tracker=_track_task,
+    )
+
 @app.on_event("shutdown")
 async def shutdown_event():
     if not _background_tasks:
@@ -257,6 +272,10 @@ _SETTINGS_DEFAULTS = {
             "enabled": False,
             "interval_minutes": 60,
         },
+        "lever": {
+            "enabled": False,
+            "interval_minutes": 60,
+        },
     },
 }
 
@@ -338,9 +357,14 @@ class GreenhouseSchedulerPatch(BaseModel):
     enabled: Optional[bool] = None
     interval_minutes: Optional[int] = None
 
+class LeverSchedulerPatch(BaseModel):
+    enabled: Optional[bool] = None
+    interval_minutes: Optional[int] = None
+
 class SchedulerSettingsPatch(BaseModel):
     ashby: Optional[AshbySchedulerPatch] = None
     greenhouse: Optional[GreenhouseSchedulerPatch] = None
+    lever: Optional[LeverSchedulerPatch] = None
 
 class SettingsPatch(BaseModel):
     pipeline: Optional[PipelineSettingsPatch] = None
@@ -371,6 +395,12 @@ def patch_settings(patch: SettingsPatch):
                 gh_cfg["enabled"] = patch.scheduler.greenhouse.enabled
             if patch.scheduler.greenhouse.interval_minutes is not None:
                 gh_cfg["interval_minutes"] = patch.scheduler.greenhouse.interval_minutes
+        if patch.scheduler.lever is not None:
+            lever_cfg = sched.setdefault("lever", dict(_SETTINGS_DEFAULTS["scheduler"]["lever"]))
+            if patch.scheduler.lever.enabled is not None:
+                lever_cfg["enabled"] = patch.scheduler.lever.enabled
+            if patch.scheduler.lever.interval_minutes is not None:
+                lever_cfg["interval_minutes"] = patch.scheduler.lever.interval_minutes
     _save_settings(current)
     logger.info("[Settings] Updated: {}", current)
     return current
@@ -386,7 +416,7 @@ def get_scheduler_status():
     }
 
 
-_VALID_SCHEDULER_JOBS = {"ashby", "greenhouse"}
+_VALID_SCHEDULER_JOBS = {"ashby", "greenhouse", "lever"}
 
 @app.post("/api/scheduler/trigger/{job_name}")
 async def trigger_scheduler_job(job_name: str):
@@ -406,6 +436,8 @@ async def trigger_scheduler_job(job_name: str):
         logger.info("[Scheduler] /trigger/{} — not active, firing directly", job_name)
         if job_name == "greenhouse":
             task = asyncio.create_task(_execute_greenhouse_scan())
+        elif job_name == "lever":
+            task = asyncio.create_task(_execute_lever_scan())
         else:
             task = asyncio.create_task(_execute_ashby_scan())
         _track_task(task)
@@ -641,6 +673,92 @@ class GreenhouseScrapeRequest(BaseModel):
 async def scrape_greenhouse(request: GreenhouseScrapeRequest):
     """Triggers server-side Greenhouse scrape. Reads portals.yml, skips existing DB jobs."""
     return await _execute_greenhouse_scan(board_token=request.slug)
+
+
+async def _execute_lever_scan(org_slug: Optional[str] = None) -> dict:
+    """
+    Core Lever scan logic — shared by the HTTP endpoint and the scheduler.
+    Reads current settings fresh on every call so UI toggles take effect immediately.
+
+    Because the Lever listing API returns descriptions inline with every posting,
+    there is no separate description-fetch phase.
+    """
+    if org_slug:
+        all_lever = _load_portals(source="lever", enabled_only=False)
+        match = next((e for e in all_lever if e["slug"] == org_slug), None)
+        portals = [{"slug": org_slug, "name": match["name"] if match else org_slug}]
+    else:
+        enabled = _load_portals(source="lever", enabled_only=True)
+        if not enabled:
+            return {"message": "No enabled Lever portals in portals.yml.", "total_processed": 0}
+        portals = [{"slug": e["slug"], "name": e["name"]} for e in enabled]
+
+    _db = next(database.get_db())
+    try:
+        existing_ids: set[str] = {
+            row.source_id
+            for row in _db.query(models.JobPosition.source_id)
+                          .filter(models.JobPosition.source == "lever")
+                          .all()
+            if row.source_id
+        }
+        logger.info("[Lever] {} existing jobs in DB", len(existing_ids))
+
+        scan_session = models.ScanSession(
+            total_jobs_scanned=0,
+            total_jobs_saved=0,
+            total_ignored=0,
+            source_meta=[{"source": "lever", "orgs": [p["slug"] for p in portals]}],
+        )
+        _db.add(scan_session)
+        _db.commit()
+        shared_session_id = scan_session.id
+        logger.info("[Lever] Created shared ScanSession {}", shared_session_id)
+    finally:
+        _db.close()
+
+    async def _pipeline(jobs: list[dict], slug: str) -> dict:
+        db = next(database.get_db())
+        try:
+            result = await execute_job_pipeline(
+                jobs, db,
+                force_rescan=False,
+                scan_source="lever",
+                session_id=shared_session_id,
+            )
+            result["org"] = slug
+            return result
+        finally:
+            db.close()
+
+    scan_result = await run_lever_scan(
+        portals,
+        existing_ids,
+        _pipeline,
+        task_tracker=_track_task,
+    )
+
+    _db = next(database.get_db())
+    try:
+        sess = _db.query(models.ScanSession).filter(models.ScanSession.id == shared_session_id).first()
+        if sess:
+            sess.total_jobs_scanned = scan_result.get("total_scanned", 0)
+            sess.total_jobs_saved   = scan_result.get("total_saved", 0)
+            sess.total_ignored      = scan_result.get("total_ignored", 0)
+            _db.commit()
+    finally:
+        _db.close()
+
+    return scan_result
+
+
+class LeverScrapeRequest(BaseModel):
+    slug: Optional[str] = None  # specific org slug, or omit for all enabled portals
+
+@app.post("/api/scrape/lever")
+async def scrape_lever(request: LeverScrapeRequest):
+    """Triggers server-side Lever scrape. Reads portals.yml, skips existing DB jobs."""
+    return await _execute_lever_scan(org_slug=request.slug)
 
 
 # ─── Activity Log Helper ──────────────────────────────────────────────────────

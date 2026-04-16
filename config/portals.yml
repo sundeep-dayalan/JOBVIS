@@ -992,3 +992,149 @@ tracked_companies:
     source: greenhouse
     slug: tenstorrent
     enabled: true
+
+  # ── Lever ─────────────────────────────────────────────────────────────────────
+  # Lever public REST API — no auth required.
+  # The backend pulls these directly via /api/scrape/lever
+  # Descriptions are returned inline with every listing — no extra fetch needed.
+  # The slug is in: jobs.lever.co/<slug>  →  api.lever.co/v0/postings/<slug>?mode=json
+  - name: Mistral
+    source: lever
+    slug: mistral
+    enabled: true
+  - name: worldscape-technology
+    source: lever
+    slug: worldscape-technology
+    enabled: true
+  - name: palantir
+    source: lever
+    slug: palantir
+    enabled: true
+  - name: saronic
+    source: lever
+    slug: saronic
+    enabled: true
+  - name: smart-working-solutions
+    source: lever
+    slug: smart-working-solutions
+    enabled: true
+  - name: velo3d
+    source: lever
+    slug: velo3d
+    enabled: true
+  - name: cyngn
+    source: lever
+    slug: cyngn
+    enabled: true
+  - name: whoop
+    source: lever
+    slug: whoop
+    enabled: true
+  - name: court-avenue
+    source: lever
+    slug: court-avenue
+    enabled: true
+  - name: jiostar
+    source: lever
+    slug: jiostar
+    enabled: true
+  - name: voleon
+    source: lever
+    slug: voleon
+    enabled: true
+  - name: zaimler
+    source: lever
+    slug: zaimler
+    enabled: true
+  - name: hive
+    source: lever
+    slug: hive
+    enabled: true
+  - name: veeva
+    source: lever
+    slug: veeva
+    enabled: true
+  - name: alluxio
+    source: lever
+    slug: alluxio
+    enabled: true
+  - name: gohighlevel
+    source: lever
+    slug: gohighlevel
+    enabled: true
+  - name: loadsmart
+    source: lever
+    slug: loadsmart
+    enabled: true
+  - name: includedhealth
+    source: lever
+    slug: includedhealth
+    enabled: true
+  - name: symmetrysystems
+    source: lever
+    slug: symmetrysystems
+    enabled: true
+  - name: wealthfront
+    source: lever
+    slug: wealthfront
+    enabled: true
+  - name: weride
+    source: lever
+    slug: weride
+    enabled: true
+  - name: quantco-
+    source: lever
+    slug: quantco-
+    enabled: true
+  - name: shieldai
+    source: lever
+    slug: shieldai
+    enabled: true
+  - name: angel
+    source: lever
+    slug: angel
+    enabled: true
+  - name: vacationrenter
+    source: lever
+    slug: vacationrenter
+    enabled: true
+  - name: tovala
+    source: lever
+    slug: tovala
+    enabled: true
+  - name: collectlyinc
+    source: lever
+    slug: collectlyinc
+    enabled: true
+  - name: aledade
+    source: lever
+    slug: aledade
+    enabled: true
+  - name: revealtech
+    source: lever
+    slug: revealtech
+    enabled: true
+  - name: evry-health
+    source: lever
+    slug: evry-health
+    enabled: true
+  - name: commencis
+    source: lever
+    slug: commencis
+    enabled: true
+  - name: ivo
+    source: lever
+    slug: ivo
+    enabled: true
+  - name: vailsys
+    source: lever
+    slug: vailsys
+    enabled: true
+  - name: field-ai
+    source: lever
+    slug: field-ai
+    enabled: true
+  - name: extremenetworks
+    source: lever
+    slug: extremenetworks
+    enabled: true

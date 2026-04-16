@@ -25,6 +25,10 @@ interface AppSettings {
       enabled: boolean
       interval_minutes: number
     }
+    lever: {
+      enabled: boolean
+      interval_minutes: number
+    }
   }
 }
 
@@ -165,6 +169,56 @@ const GREENHOUSE_STEPS: FlowStep[] = [
   },
 ]
 
+// ── Lever-specific ingestion steps ────────────────────────────────────────────
+// Note: Lever returns descriptions inline with every listing — no Phase 2 fetch.
+const LEVER_STEPS: FlowStep[] = [
+  {
+    id: 'lever-portals',
+    icon: '📋',
+    label: 'PORTALS.YML',
+    sublabel: 'Org registry',
+    description: 'Server reads portals.yml to get the list of enabled Lever org slugs (e.g. "mistral"). Only companies with enabled: true (default) are targeted.',
+    color: 'var(--step-lever-1)',
+    details: ['config/portals.yml', 'enabled: true filter', 'slug extraction'],
+  },
+  {
+    id: 'lever-listing',
+    icon: '📡',
+    label: 'PHASE 1 — LISTING',
+    sublabel: 'Parallel REST queries',
+    description: 'All org listing queries fire concurrently (up to 3 in parallel) against the Lever public REST API. Unlike Ashby or Greenhouse, the listing response already includes full descriptions — no Phase 2 fetch is needed.',
+    color: 'var(--step-lever-2)',
+    details: ['GET /v0/postings/{slug}?mode=json', 'LISTING_CONCURRENCY = 3', 'asyncio.gather() all orgs', 'Descriptions included inline ✓'],
+  },
+  {
+    id: 'lever-dedup',
+    icon: '⊘',
+    label: 'DB SKIP CHECK',
+    sublabel: 'Pre-pipeline dedup',
+    description: 'Listing is crossed against all known Lever source_ids in the DB. Already-known jobs are dropped before the pipeline — no wasted work.',
+    color: 'var(--step-lever-3)',
+    details: ['DB query: existing Lever source_ids', 'O(1) set lookup', 'UUID-based job IDs'],
+  },
+  {
+    id: 'lever-title',
+    icon: '🔤',
+    label: 'TITLE PRE-FILTER',
+    sublabel: 'Early keyword discard',
+    description: 'Title is checked against filter.yml include/exclude rules before entering the pipeline. Jobs guaranteed to be IGNORED are dropped here.',
+    color: 'var(--step-lever-4)',
+    details: ['apply_preliminary_filters()', 'Reuses same filter.yml rules', 'posting.text → title field'],
+  },
+  {
+    id: 'lever-map',
+    icon: '🗺',
+    label: 'SCHEMA MAPPER',
+    sublabel: 'Normalize to JOBVIS format',
+    description: 'Raw Lever posting fields are mapped to the standard JOBVIS job schema. Descriptions, timestamps (ms epoch → ISO), and workplace type are normalized inline.',
+    color: 'var(--step-lever-5)',
+    details: ['source: "lever"', 'text → title · hostedUrl → source_url', 'workplaceType → Remote/Hybrid/On-site', 'createdAt (ms) → ISO timestamp', 'descriptionPlain fallback to HTML strip'],
+  },
+]
+
 // ── LinkedIn-specific ingestion steps ─────────────────────────────────────────
 const LINKEDIN_STEPS: FlowStep[] = [
   {
@@ -297,6 +351,16 @@ const PROVIDERS = [
     badge: 'API',
     color: '#22c55e',
   },
+  {
+    id: 'lever',
+    name: 'Lever',
+    type: 'Server-side API',
+    status: 'active',
+    icon: 'LV',
+    description: "Companies tracked in portals.yml are crawled server-side via Lever's public REST API. Descriptions are returned inline with every listing — no separate per-job fetch needed.",
+    badge: 'API',
+    color: '#f97316',
+  },
 ]
 
 // ─── Scheduler interval options ──────────────────────────────────────────────
@@ -320,7 +384,7 @@ function SchedulerControl({
   onInterval,
   saving,
 }: {
-  source: 'ashby' | 'greenhouse'
+  source: 'ashby' | 'greenhouse' | 'lever'
   settings: AppSettings | null
   onToggle: (enabled: boolean) => void
   onInterval: (minutes: number) => void
@@ -414,7 +478,7 @@ function SchedulerControl({
     }
   }
 
-  const stepColor = source === 'greenhouse' ? 'var(--step-gh-5)' : 'var(--step-ashby-5)'
+  const stepColor = source === 'greenhouse' ? 'var(--step-gh-5)' : source === 'lever' ? 'var(--step-lever-5)' : 'var(--step-ashby-5)'
 
   return (
     <div className="scheduler-control">
@@ -649,6 +713,24 @@ function extractAshbySlugs(urls: string[]): ParsedSlug[] {
     try {
       const u = new URL(raw)
       if (u.hostname !== 'jobs.ashbyhq.com') continue
+      const parts = u.pathname.split('/').filter(Boolean)
+      if (parts.length === 0) continue
+      const slug = decodeURIComponent(parts[0]).toLowerCase()
+      if (slug.includes(' ')) continue
+      if (!seen.has(slug)) { seen.add(slug); results.push({ slug, name: slug }) }
+    } catch { /* not a URL */ }
+  }
+  return results
+}
+
+/** Extract Lever org slugs from a list of URLs */
+function extractLeverSlugs(urls: string[]): ParsedSlug[] {
+  const seen = new Set<string>()
+  const results: ParsedSlug[] = []
+  for (const raw of urls) {
+    try {
+      const u = new URL(raw)
+      if (!u.hostname.includes('lever.co')) continue
       const parts = u.pathname.split('/').filter(Boolean)
       if (parts.length === 0) continue
       const slug = decodeURIComponent(parts[0]).toLowerCase()
@@ -1124,11 +1206,236 @@ function GreenhousePortalPanel() {
   )
 }
 
+// ─── Lever Portal Panel ───────────────────────────────────────────────────────
+
+function LeverPortalPanel() {
+  const [portals, setPortals]         = useState<Portal[]>([])
+  const [loading, setLoading]         = useState(false)
+  const [feedback, setFeedback]       = useState<string | null>(null)
+  const [feedbackErr, setFeedbackErr] = useState(false)
+  const [adding, setAdding]           = useState(false)
+  const [token, setToken]             = useState('')
+  const [name, setName]               = useState('')
+  const [submitting, setSubmitting]   = useState(false)
+  const fileInputRef                  = useRef<HTMLInputElement>(null)
+
+  // CSV column-picker state
+  const [csvHeaders, setCsvHeaders]   = useState<string[]>([])
+  const [csvRows, setCsvRows]         = useState<string[][]>([])
+  const [csvColIdx, setCsvColIdx]     = useState<number | null>(null)
+  const [csvPending, setCsvPending]   = useState(false)
+  const [importing, setImporting]     = useState(false)
+
+  const fetchPortals = () => {
+    setLoading(true)
+    fetch('http://localhost:8000/api/portals')
+      .then(r => r.json())
+      .then((data: Portal[]) => setPortals(data.filter(p => p.source === 'lever')))
+      .catch(() => setFeedback('Could not load portals — is the server running?'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { fetchPortals() }, [])
+
+  // Manual add
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const t = token.trim().toLowerCase()
+    const n = name.trim()
+    if (!t) return
+    setSubmitting(true)
+    setFeedback(null)
+    try {
+      const res = await fetch('http://localhost:8000/api/portals/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify([{ source: 'lever', slug: t, name: n || t }]),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const result = await res.json()
+      if (result.imported > 0) {
+        setFeedback(`Added: ${t}`)
+        setFeedbackErr(false)
+        setToken(''); setName(''); setAdding(false)
+        fetchPortals()
+      } else {
+        setFeedback(`'${t}' is already tracked.`)
+        setFeedbackErr(false)
+      }
+    } catch {
+      setFeedback('Import failed — server unreachable.')
+      setFeedbackErr(true)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // CSV step 1 — parse headers
+  const handleCsvFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    const text = await file.text()
+    const { headers, rows } = parseCsvHeaders(text)
+    if (headers.length === 0) {
+      setFeedback('Could not read CSV headers.')
+      setFeedbackErr(true)
+      return
+    }
+    setCsvHeaders(headers); setCsvRows(rows)
+    setCsvColIdx(null); setCsvPending(true); setFeedback(null)
+  }
+
+  // CSV step 2 — confirm column
+  const handleConfirmImport = async () => {
+    if (csvColIdx === null) return
+    const urls = previewColumn(csvRows, csvColIdx)
+    const parsed = extractLeverSlugs(urls)
+    if (parsed.length === 0) {
+      setFeedback('No Lever URLs found in that column.')
+      setFeedbackErr(true); setCsvPending(false); return
+    }
+    const existingSlugs = new Set(portals.map(p => p.slug))
+    const newEntries = parsed
+      .filter(p => !existingSlugs.has(p.slug))
+      .map(p => ({ ...p, source: 'lever' }))
+    if (newEntries.length === 0) {
+      setFeedback(`All ${parsed.length} slug(s) already tracked — nothing to import.`)
+      setFeedbackErr(false); setCsvPending(false); return
+    }
+    setImporting(true); setCsvPending(false); setFeedback(null)
+    try {
+      const res = await fetch('http://localhost:8000/api/portals/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newEntries),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const result = await res.json()
+      setFeedback(`Imported ${result.imported} new portal(s), skipped ${result.skipped} duplicate(s).`)
+      setFeedbackErr(false); fetchPortals()
+    } catch {
+      setFeedback('Import failed — server unreachable.')
+      setFeedbackErr(true)
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const active   = portals.filter(p => p.enabled)
+  const disabled = portals.filter(p => !p.enabled)
+
+  const isLeverUrl = (v: string) => { try { return new URL(v).hostname.includes('lever.co') } catch { return false } }
+
+  return (
+    <div className="portal-panel">
+      <div className="portal-panel-header">
+        <span className="portal-panel-count">
+          {loading ? 'Loading…' : `${active.length} active · ${disabled.length} disabled`}
+        </span>
+        <div className="portal-panel-actions">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv"
+            style={{ display: 'none' }}
+            onChange={handleCsvFile}
+          />
+          <button
+            className="portal-import-btn"
+            onClick={() => { setCsvPending(false); fileInputRef.current?.click() }}
+            disabled={importing}
+          >
+            {importing ? 'Importing…' : '⬆ Import from CSV'}
+          </button>
+          <button
+            className="portal-import-btn"
+            onClick={() => { setAdding(a => !a); setFeedback(null) }}
+          >
+            {adding ? '✕ Cancel' : '+ Add org'}
+          </button>
+        </div>
+      </div>
+
+      {/* ── CSV column picker ── */}
+      {csvPending && (
+        <div className="csv-import-panel">
+          <CsvColumnPicker
+            headers={csvHeaders}
+            rows={csvRows}
+            selectedCol={csvColIdx}
+            onSelect={setCsvColIdx}
+            urlFilter={isLeverUrl}
+          />
+          <div className="csv-import-actions">
+            <button
+              className="portal-import-btn"
+              onClick={handleConfirmImport}
+              disabled={csvColIdx === null}
+            >
+              Import slugs from this column
+            </button>
+            <button className="portal-cancel-btn" onClick={() => setCsvPending(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Manual add form ── */}
+      {adding && (
+        <form className="gh-add-form" onSubmit={handleAdd}>
+          <input
+            className="gh-add-input"
+            placeholder="org slug (e.g. mistral)"
+            value={token}
+            onChange={e => setToken(e.target.value)}
+            required
+          />
+          <input
+            className="gh-add-input"
+            placeholder="display name (optional)"
+            value={name}
+            onChange={e => setName(e.target.value)}
+          />
+          <button className="portal-import-btn" type="submit" disabled={submitting || !token.trim()}>
+            {submitting ? 'Adding…' : 'Add'}
+          </button>
+        </form>
+      )}
+
+      {feedback && (
+        <div className={`portal-feedback ${feedbackErr ? 'portal-feedback--err' : 'portal-feedback--ok'}`}>
+          {feedback}
+        </div>
+      )}
+
+      {!loading && portals.length > 0 && (
+        <ul className="portal-list">
+          {portals.map(p => (
+            <li key={p.slug} className={`portal-list-item ${p.enabled ? '' : 'portal-list-item--disabled'}`}>
+              <span className="portal-slug">{p.slug}</span>
+              <span className="portal-name">{p.name !== p.slug ? p.name : ''}</span>
+              <span className={`portal-enabled-badge ${p.enabled ? 'portal-enabled-badge--on' : 'portal-enabled-badge--off'}`}>
+                {p.enabled ? 'ON' : 'OFF'}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!loading && portals.length === 0 && (
+        <p className="portal-empty">No Lever portals configured yet.</p>
+      )}
+    </div>
+  )
+}
+
 // ─── Provider card (expandable for Ashby / Greenhouse) ───────────────────────
 
 function ProviderCard({ provider }: { provider: typeof PROVIDERS[number] }) {
   const [open, setOpen] = useState(false)
-  const expandable = provider.id === 'ashby' || provider.id === 'greenhouse'
+  const expandable = provider.id === 'ashby' || provider.id === 'greenhouse' || provider.id === 'lever'
 
   return (
     <div className={`provider-card ${expandable ? 'provider-card--expandable' : ''}`}
@@ -1156,6 +1463,7 @@ function ProviderCard({ provider }: { provider: typeof PROVIDERS[number] }) {
       <p className="provider-desc">{provider.description}</p>
       {provider.id === 'ashby' && open && <AshbyPortalPanel />}
       {provider.id === 'greenhouse' && open && <GreenhousePortalPanel />}
+      {provider.id === 'lever' && open && <LeverPortalPanel />}
     </div>
   )
 }
@@ -1177,6 +1485,7 @@ export default function Settings() {
         scheduler: {
           ashby: { enabled: false, interval_minutes: 60 },
           greenhouse: { enabled: false, interval_minutes: 60 },
+          lever: { enabled: false, interval_minutes: 60 },
         },
       }))
   }, [])
@@ -1203,7 +1512,7 @@ export default function Settings() {
     }
   }
 
-  const patchScheduler = async (source: 'ashby' | 'greenhouse', patch: { enabled?: boolean; interval_minutes?: number }) => {
+  const patchScheduler = async (source: 'ashby' | 'greenhouse' | 'lever', patch: { enabled?: boolean; interval_minutes?: number }) => {
     if (!settings) return
     setSaving(true)
     setSaveError(null)
@@ -1262,29 +1571,14 @@ export default function Settings() {
         </p>
 
         {/* ── Two-column ingestion lanes ──────────────────────────────── */}
-        <div className="ingestion-label-row">
-          <div className="lane-header lane-header--ashby">
-            <span className="lane-header-badge ashby-badge">API</span>
-            <span className="lane-header-name">Ashby HQ</span>
-            <span className="lane-header-sub">Server-side GraphQL scrape</span>
-          </div>
-          <div className="lane-divider" />
-          <div className="lane-header lane-header--greenhouse">
-            <span className="lane-header-badge gh-badge">API</span>
-            <span className="lane-header-name">Greenhouse</span>
-            <span className="lane-header-sub">Server-side REST scrape</span>
-          </div>
-          <div className="lane-divider" />
-          <div className="lane-header lane-header--linkedin">
-            <span className="lane-header-badge li-badge">SCRAPER</span>
-            <span className="lane-header-name">LinkedIn</span>
-            <span className="lane-header-sub">Chrome Extension injection</span>
-          </div>
-        </div>
-
-        <div className="tri-lane">
+        <div className="quad-lane">
           {/* ── Ashby lane ── */}
           <div className="lane lane--ashby">
+            <div className="lane-header lane-header--ashby">
+              <span className="lane-header-badge ashby-badge">API</span>
+              <span className="lane-header-name">Ashby HQ</span>
+              <span className="lane-header-sub">Server-side GraphQL scrape</span>
+            </div>
             <SchedulerControl
               source="ashby"
               settings={settings}
@@ -1310,6 +1604,11 @@ export default function Settings() {
 
           {/* ── Greenhouse lane ── */}
           <div className="lane lane--greenhouse">
+            <div className="lane-header lane-header--greenhouse">
+              <span className="lane-header-badge gh-badge">API</span>
+              <span className="lane-header-name">Greenhouse</span>
+              <span className="lane-header-sub">Server-side REST scrape</span>
+            </div>
             <SchedulerControl
               source="greenhouse"
               settings={settings}
@@ -1333,8 +1632,41 @@ export default function Settings() {
             ))}
           </div>
 
+          {/* ── Lever lane ── */}
+          <div className="lane lane--lever">
+            <div className="lane-header lane-header--lever">
+              <span className="lane-header-badge lever-badge">API</span>
+              <span className="lane-header-name">Lever</span>
+              <span className="lane-header-sub">Server-side REST scrape</span>
+            </div>
+            <SchedulerControl
+              source="lever"
+              settings={settings}
+              onToggle={enabled => patchScheduler('lever', { enabled })}
+              onInterval={minutes => patchScheduler('lever', { interval_minutes: minutes })}
+              saving={saving}
+            />
+            {LEVER_STEPS.map((step, i) => (
+              <div key={step.id}>
+                <PipelineStep
+                  step={step}
+                  index={i}
+                  isOpen={openStep === step.id}
+                  onToggle={() => toggle(step.id)}
+                  saving={saving}
+                />
+                {i < LEVER_STEPS.length - 1 && <Connector />}
+              </div>
+            ))}
+          </div>
+
           {/* ── LinkedIn lane ── */}
           <div className="lane lane--linkedin">
+            <div className="lane-header lane-header--linkedin">
+              <span className="lane-header-badge li-badge">SCRAPER</span>
+              <span className="lane-header-name">LinkedIn</span>
+              <span className="lane-header-sub">Chrome Extension injection</span>
+            </div>
             {LINKEDIN_STEPS.map((step, i) => (
               <div key={step.id}>
                 <PipelineStep
