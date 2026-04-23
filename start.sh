@@ -29,13 +29,13 @@ echo ""
 # Start the Python Server in the background
 echo "[1/2] Starting FastAPI Server in the background..."
 cd apps/server
-source venv/bin/activate
 
 # Silently forcefully kill any stranded python processes hoarding port 8000 from a previous run
 lsof -ti:8000 | xargs kill -9 2>/dev/null || true
 
 # Run server and stream its output. Running in background using '&'
-APP_ENV=$ENV_MODE uvicorn main:app --reload --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 3 &
+# Use venv binary directly — 'source activate' doesn't reliably propagate PATH in non-interactive bash
+APP_ENV=$ENV_MODE ./venv/bin/uvicorn main:app --reload --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 3 &
 
 # Go back to the original directory
 cd ../..
