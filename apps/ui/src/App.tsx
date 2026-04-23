@@ -11,7 +11,7 @@ function App() {
       <div className="layout-container">
         <header className="header">
           <Link to="/" className="logo">
-            JOBVIS-PROD
+            JOBVIS
           </Link>
           <nav>
             <Link to="/history" className="btn" style={{ marginRight: '1rem' }}>
