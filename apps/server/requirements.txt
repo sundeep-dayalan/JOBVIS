@@ -6,3 +6,5 @@ pyyaml
 sqlalchemy
 psycopg2-binary
 loguru
+python-dotenv
+dotenv
