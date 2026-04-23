@@ -253,9 +253,16 @@ async def receive_rescan(request: RescanRequest, db: Session = Depends(database.
 
 # ─── Settings helpers ────────────────────────────────────────────────────────
 
-SETTINGS_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), '../../config/settings.yml')
+_APP_ENV = os.getenv("APP_ENV", "dev").lower()
+_env_settings_file = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), f'../../config/settings.{_APP_ENV}.yml')
 )
+if not os.path.exists(_env_settings_file):
+    raise FileNotFoundError(
+        f"[Settings] Expected config/settings.{_APP_ENV}.yml but it does not exist. "
+        f"Create it before starting the server in '{_APP_ENV}' mode."
+    )
+SETTINGS_PATH = _env_settings_file
 
 _SETTINGS_DEFAULTS = {
     "pipeline": {
@@ -280,7 +287,7 @@ _SETTINGS_DEFAULTS = {
 }
 
 def _load_settings() -> dict:
-    """Reads config/settings.yml; falls back to defaults on any error."""
+    """Reads config/settings.{APP_ENV}.yml; falls back to defaults on any error."""
     try:
         with open(SETTINGS_PATH, 'r') as f:
             data = yaml.safe_load(f) or {}
@@ -298,7 +305,7 @@ def _load_settings() -> dict:
 
 
 def _save_settings(settings: dict) -> None:
-    """Writes settings dict back to settings.yml atomically."""
+    """Writes settings dict back to settings.{APP_ENV}.yml atomically."""
     import tempfile, shutil
     tmp_path = SETTINGS_PATH + ".tmp"
     try:

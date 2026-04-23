@@ -10,5 +10,5 @@ scheduler:
     enabled: false
     interval_minutes: 15
   lever:
-    enabled: true
+    enabled: false
     interval_minutes: 15

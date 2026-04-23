@@ -1070,10 +1070,6 @@ tracked_companies:
     source: lever
     slug: includedhealth
     enabled: true
-  - name: symmetrysystems
-    source: lever
-    slug: symmetrysystems
-    enabled: true
   - name: wealthfront
     source: lever
     slug: wealthfront
@@ -1094,17 +1090,9 @@ tracked_companies:
     source: lever
     slug: angel
     enabled: true
-  - name: vacationrenter
-    source: lever
-    slug: vacationrenter
-    enabled: true
   - name: tovala
     source: lever
     slug: tovala
-    enabled: true
-  - name: collectlyinc
-    source: lever
-    slug: collectlyinc
     enabled: true
   - name: aledade
     source: lever
