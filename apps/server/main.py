@@ -1111,6 +1111,57 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
         "status": "success",
     }
 
+
+# ─── Bulk job status update ───────────────────────────────────────────────────
+
+class BulkStatusUpdate(BaseModel):
+    job_ids: List[str]
+    status: JobStatus  # "ACTIVE" or "IGNORED"
+    reason: Optional[str] = None  # optional ignore reason (used when moving to IGNORED)
+
+@app.patch("/api/jobs/status")
+def bulk_update_status(payload: BulkStatusUpdate, db: Session = Depends(database.get_db)):
+    """
+    Bulk-move a list of jobs to ACTIVE or IGNORED.
+    Appends a MANUAL_STATUS_CHANGE entry to each job's activity_log.
+    """
+    if not payload.job_ids:
+        return {"updated": 0, "status": "no-op"}
+
+    import uuid as _uuid
+    # Validate all IDs are valid UUIDs before hitting the DB
+    try:
+        valid_ids = [str(_uuid.UUID(jid)) for jid in payload.job_ids]
+    except (ValueError, AttributeError):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail="One or more job_ids are not valid UUIDs.")
+
+    rows = db.query(models.JobPosition).filter(models.JobPosition.id.in_(valid_ids)).all()
+
+    if not rows:
+        return {"updated": 0, "status": "not-found"}
+
+    event = _activity_event(
+        "MANUAL_STATUS_CHANGE",
+        f"Manually moved to {payload.status.value}" + (f" — {payload.reason}" if payload.reason else ""),
+        {"new_status": payload.status.value, "reason": payload.reason},
+    )
+
+    for row in rows:
+        row.status = payload.status.value
+        if payload.status == JobStatus.IGNORED:
+            row.ignore_reason = payload.reason or "Manually ignored"
+        else:
+            row.ignore_reason = None  # clear ignore reason when restoring to ACTIVE
+        log = list(row.activity_log or [])
+        log.append(event)
+        row.activity_log = log
+
+    db.commit()
+    logger.info("[Jobs] Bulk status update: {} jobs -> {}", len(rows), payload.status.value)
+    return {"updated": len(rows), "status": "success", "new_status": payload.status.value}
+
+
 @app.get("/api/jobs", response_model=List[JobResponse])
 def get_jobs(db: Session = Depends(database.get_db)):
     jobs = db.query(models.JobPosition).order_by(models.JobPosition.created_at.desc()).all()

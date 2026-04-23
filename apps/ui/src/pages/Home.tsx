@@ -32,6 +32,7 @@ function Home() {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [selectedRescanIds, setSelectedRescanIds] = useState<Set<string>>(new Set());
   const [isRescanning, setIsRescanning] = useState(false);
+  const [isMovingStatus, setIsMovingStatus] = useState(false);
   const [isAshbyScanning, setIsAshbyScanning] = useState(false);
   const [ashbyMessage, setAshbyMessage] = useState<string | null>(null);
 
@@ -53,6 +54,28 @@ function Home() {
   useEffect(() => {
     fetchJobsData();
   }, []);
+
+  const bulkMoveStatus = async (targetStatus: 'ACTIVE' | 'IGNORED') => {
+    if (selectedRescanIds.size === 0 || isMovingStatus) return;
+    setIsMovingStatus(true);
+    try {
+      await fetch('http://localhost:8000/api/jobs/status', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          job_ids: Array.from(selectedRescanIds),
+          status: targetStatus,
+          reason: targetStatus === 'IGNORED' ? 'Manually ignored' : null,
+        }),
+      });
+      setSelectedRescanIds(new Set());
+      await fetchJobsData();
+    } catch (e) {
+      console.error('Bulk move status err:', e);
+    } finally {
+      setIsMovingStatus(false);
+    }
+  };
 
   // Update selected job automatically if filter or items totally change
   useEffect(() => {
@@ -117,6 +140,41 @@ function Home() {
             >
               {isRescanning ? 'INITIALIZING...' : `RE-SCAN STRATEGY (${selectedRescanIds.size})`}
             </button>
+
+            {/* ── Bulk Move Status ──────────────────────────────────── */}
+            {selectedRescanIds.size > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                <span style={{ color: '#555', fontSize: '0.8rem', letterSpacing: '1px', userSelect: 'none' }}>MOVE TO →</span>
+                <button
+                  className="btn"
+                  style={{
+                    padding: '0.4rem 0.75rem',
+                    fontSize: '0.82rem',
+                    borderColor: '#22c55e',
+                    color: '#4ade80',
+                    opacity: isMovingStatus ? 0.5 : 1,
+                  }}
+                  disabled={isMovingStatus}
+                  onClick={() => bulkMoveStatus('ACTIVE')}
+                >
+                  {isMovingStatus ? '...' : 'ACTIVE'}
+                </button>
+                <button
+                  className="btn"
+                  style={{
+                    padding: '0.4rem 0.75rem',
+                    fontSize: '0.82rem',
+                    borderColor: '#ef4444',
+                    color: '#f87171',
+                    opacity: isMovingStatus ? 0.5 : 1,
+                  }}
+                  disabled={isMovingStatus}
+                  onClick={() => bulkMoveStatus('IGNORED')}
+                >
+                  {isMovingStatus ? '...' : 'IGNORED'}
+                </button>
+              </div>
+            )}
           </>
 
           {/* Ashby Scan Button */}
