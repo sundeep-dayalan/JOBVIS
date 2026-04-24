@@ -33,6 +33,7 @@ function Home() {
   const [selectedRescanIds, setSelectedRescanIds] = useState<Set<string>>(new Set());
   const [isRescanning, setIsRescanning] = useState(false);
   const [isMovingStatus, setIsMovingStatus] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [isAshbyScanning, setIsAshbyScanning] = useState(false);
   const [ashbyMessage, setAshbyMessage] = useState<string | null>(null);
 
@@ -74,6 +75,28 @@ function Home() {
       console.error('Bulk move status err:', e);
     } finally {
       setIsMovingStatus(false);
+    }
+  };
+
+  const bulkDeleteJobs = async () => {
+    if (selectedRescanIds.size === 0 || isDeleting) return;
+    const confirmed = window.confirm(
+      `Permanently delete ${selectedRescanIds.size} job(s)? This cannot be undone.`
+    );
+    if (!confirmed) return;
+    setIsDeleting(true);
+    try {
+      await fetch('http://localhost:8000/api/jobs', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_ids: Array.from(selectedRescanIds) }),
+      });
+      setSelectedRescanIds(new Set());
+      await fetchJobsData();
+    } catch (e) {
+      console.error('Bulk delete err:', e);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -172,6 +195,28 @@ function Home() {
                   onClick={() => bulkMoveStatus('IGNORED')}
                 >
                   {isMovingStatus ? '...' : 'IGNORED'}
+                </button>
+
+                {/* ── Divider ── */}
+                <span style={{ color: '#333', fontSize: '0.8rem', padding: '0 0.15rem', userSelect: 'none' }}>|</span>
+
+                {/* ── Delete ── */}
+                <button
+                  className="btn"
+                  style={{
+                    padding: '0.4rem 0.75rem',
+                    fontSize: '0.82rem',
+                    borderColor: '#dc2626',
+                    color: '#ef4444',
+                    background: 'rgba(220, 38, 38, 0.08)',
+                    opacity: isDeleting ? 0.5 : 1,
+                    fontWeight: 'bold',
+                    letterSpacing: '1px',
+                  }}
+                  disabled={isDeleting}
+                  onClick={bulkDeleteJobs}
+                >
+                  {isDeleting ? 'DELETING...' : `DELETE (${selectedRescanIds.size})`}
                 </button>
               </div>
             )}

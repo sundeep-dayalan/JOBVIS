@@ -1162,6 +1162,39 @@ def bulk_update_status(payload: BulkStatusUpdate, db: Session = Depends(database
     return {"updated": len(rows), "status": "success", "new_status": payload.status.value}
 
 
+# ─── Bulk job delete ─────────────────────────────────────────────────────────
+
+class BulkDeleteRequest(BaseModel):
+    job_ids: List[str]
+
+@app.delete("/api/jobs")
+def bulk_delete_jobs(payload: BulkDeleteRequest, db: Session = Depends(database.get_db)):
+    """
+    Hard-deletes a list of jobs from the database by their IDs.
+    """
+    if not payload.job_ids:
+        return {"deleted": 0, "status": "no-op"}
+
+    import uuid as _uuid
+    try:
+        valid_ids = [str(_uuid.UUID(jid)) for jid in payload.job_ids]
+    except (ValueError, AttributeError):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail="One or more job_ids are not valid UUIDs.")
+
+    rows = db.query(models.JobPosition).filter(models.JobPosition.id.in_(valid_ids)).all()
+
+    if not rows:
+        return {"deleted": 0, "status": "not-found"}
+
+    for row in rows:
+        db.delete(row)
+
+    db.commit()
+    logger.info("[Jobs] Bulk delete: {} jobs removed", len(rows))
+    return {"deleted": len(rows), "status": "success"}
+
+
 @app.get("/api/jobs", response_model=List[JobResponse])
 def get_jobs(db: Session = Depends(database.get_db)):
     jobs = db.query(models.JobPosition).order_by(models.JobPosition.created_at.desc()).all()
