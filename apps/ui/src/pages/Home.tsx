@@ -2,6 +2,36 @@ import { useEffect, useState } from 'react';
 
 export type JobStatusEnum = 'ACTIVE' | 'IGNORED' | 'ALL';
 
+type DatePreset = '15MIN' | '30MIN' | '1HR' | '2HR' | '4HR' | '8HR' | '24HR' | 'ALL';
+
+const PRESET_HOURS: Record<DatePreset, number | null> = {
+  '15MIN': 0.25,
+  '30MIN': 0.5,
+  '1HR':   1,
+  '2HR':   2,
+  '4HR':   4,
+  '8HR':   8,
+  '24HR':  24,
+  'ALL':   null,
+};
+
+const PRESET_LABELS: Record<DatePreset, string> = {
+  '15MIN': '15 MIN',
+  '30MIN': '30 MIN',
+  '1HR':   '1 HR',
+  '2HR':   '2 HR',
+  '4HR':   '4 HR',
+  '8HR':   '8 HR',
+  '24HR':  '24 HR',
+  'ALL':   'ALL',
+};
+
+function parseDateStr(d?: string): Date | null {
+  if (!d) return null;
+  const parsed = new Date(d);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
 export interface IAIAnalysis {
   score?: number;
   reason?: string;
@@ -34,8 +64,12 @@ function Home() {
   const [isRescanning, setIsRescanning] = useState(false);
   const [isMovingStatus, setIsMovingStatus] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [isAshbyScanning, setIsAshbyScanning] = useState(false);
-  const [ashbyMessage, setAshbyMessage] = useState<string | null>(null);
+
+  // ── Date filter state ─────────────────────────────────────────────────────
+  const [datePreset, setDatePreset] = useState<DatePreset>('ALL');
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
+
 
   const fetchJobsData = async () => {
     try {
@@ -100,6 +134,16 @@ function Home() {
     }
   };
 
+  // ── Date preset: hour-window presets clear the custom date pickers ────────
+  // (actual filtering uses PRESET_HOURS directly, not dateFrom/dateTo)
+  useEffect(() => {
+    if (datePreset !== 'ALL') {
+      // Clear custom pickers when a preset is selected
+      setDateFrom('');
+      setDateTo('');
+    }
+  }, [datePreset]);
+
   // Update selected job automatically if filter or items totally change
   useEffect(() => {
     const activeJobs = jobs.filter(job => job.status === statusFilter);
@@ -114,14 +158,60 @@ function Home() {
     setSelectedRescanIds(new Set());
   }, [statusFilter]);
 
-  const filteredJobs = statusFilter === 'ALL' ? jobs : jobs.filter(job => job.status === statusFilter);
+  // ── Filtering logic ───────────────────────────────────────────────────────
+  const statusFiltered = statusFilter === 'ALL' ? jobs : jobs.filter(job => job.status === statusFilter);
+
+  const filteredJobs = statusFiltered.filter(job => {
+    const posted = parseDateStr(job.job_posted_at);
+
+    // Hour-based preset window
+    const hours = PRESET_HOURS[datePreset];
+    if (hours !== null && posted) {
+      const cutoff = new Date(Date.now() - hours * 3_600_000);
+      if (posted < cutoff) return false;
+    }
+
+    // Custom FROM/TO date pickers (only active when preset is ALL)
+    if (datePreset === 'ALL') {
+      if (dateFrom && posted) {
+        const from = new Date(dateFrom);
+        from.setHours(0, 0, 0, 0);
+        if (posted < from) return false;
+      }
+      if (dateTo && posted) {
+        const to = new Date(dateTo);
+        to.setHours(23, 59, 59, 999);
+        if (posted > to) return false;
+      }
+    }
+
+    return true;
+  });
+
   const selectedJob = filteredJobs.find(job => job.id === selectedJobId) || null;
+  const isDateActive = datePreset !== 'ALL' || !!dateFrom || !!dateTo;
 
   return (
     <div className="home-container" style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 120px)' }}>
-      {/* Header Top Bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', flexShrink: 0 }}>
-        <h2 style={{ color: 'var(--text-main)', margin: 0 }}>/// JOBS</h2>
+      {/* ── Toolbar ─────────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
+          <h2 style={{ color: 'var(--text-main)', margin: 0 }}>/// JOBS</h2>
+          <span style={{
+            fontSize: '0.78rem',
+            fontWeight: 'bold',
+            letterSpacing: '1.5px',
+            color: isDateActive ? 'var(--accent)' : 'var(--text-dim)',
+            background: isDateActive ? 'rgba(255,193,7,0.1)' : 'rgba(102,252,241,0.07)',
+            border: `1px solid ${isDateActive ? 'rgba(255,193,7,0.3)' : 'var(--border-color)'}`,
+            borderRadius: '3px',
+            padding: '0.15rem 0.55rem',
+            transition: 'all 0.2s ease',
+            flexShrink: 0,
+          }}>
+            {filteredJobs.length} {filteredJobs.length === 1 ? 'RESULT' : 'RESULTS'}
+          </span>
+        </div>
 
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
           <>
@@ -222,80 +312,160 @@ function Home() {
             )}
           </>
 
-          {/* Ashby Scan Button */}
-          <button
-            className="btn"
-            style={{
-              padding: '0.4rem 0.8rem',
-              fontSize: '0.85rem',
-              borderColor: isAshbyScanning ? 'var(--accent)' : '#6c63ff',
-              color: isAshbyScanning ? 'var(--accent)' : '#a78bfa',
-              opacity: isAshbyScanning ? 0.7 : 1,
-              position: 'relative',
-            }}
-            disabled={isAshbyScanning}
-            onClick={async () => {
-              setIsAshbyScanning(true);
-              setAshbyMessage(null);
-              try {
-                const res = await fetch('http://localhost:8000/api/scrape/ashby', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({}),
-                });
-                const data = await res.json();
-                const count = data.total_processed ?? data.total_saved ?? 0;
-                setAshbyMessage(`ASHBY: ${count} jobs ingested`);
-                await fetchJobsData();
-              } catch (e) {
-                console.error('Ashby scan err:', e);
-                setAshbyMessage('ASHBY SCAN FAILED');
-              } finally {
-                setIsAshbyScanning(false);
-                setTimeout(() => setAshbyMessage(null), 4000);
-              }
-            }}
-          >
-            {isAshbyScanning ? 'SCANNING ASHBY...' : 'SCAN ASHBY_'}
-          </button>
-
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as JobStatusEnum)}
-            style={{
-              background: 'rgba(0, 0, 0, 0.8)',
-              color: 'var(--accent)',
-              border: '1px solid var(--accent)',
-              padding: '0.5rem 1rem',
-              outline: 'none',
-              textTransform: 'uppercase',
-              fontWeight: 'bold',
-              cursor: 'pointer'
-            }}
-          >
-            <option value="ALL">VIEW ALL</option>
-            <option value="ACTIVE">VIEW ACTIVE</option>
-            <option value="IGNORED">VIEW IGNORED</option>
-          </select>
+          {/* ── Status Segmented Toggle ──────────────────────────────── */}
+          <div style={{
+            display: 'flex',
+            border: '1px solid var(--border-color)',
+            borderRadius: '3px',
+            overflow: 'hidden',
+            flexShrink: 0,
+          }}>
+            {(['ALL', 'ACTIVE', 'IGNORED'] as JobStatusEnum[]).map(s => (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(s)}
+                style={{
+                  padding: '0.4rem 0.9rem',
+                  fontSize: '0.78rem',
+                  fontFamily: 'inherit',
+                  fontWeight: 'bold',
+                  letterSpacing: '1px',
+                  textTransform: 'uppercase',
+                  border: 'none',
+                  borderRight: s !== 'IGNORED' ? '1px solid var(--border-color)' : 'none',
+                  cursor: 'pointer',
+                  transition: 'all 0.18s ease',
+                  background: statusFilter === s
+                    ? s === 'ACTIVE' ? 'rgba(34,197,94,0.18)'
+                      : s === 'IGNORED' ? 'rgba(239,68,68,0.18)'
+                      : 'rgba(102,252,241,0.12)'
+                    : 'transparent',
+                  color: statusFilter === s
+                    ? s === 'ACTIVE' ? '#4ade80'
+                      : s === 'IGNORED' ? '#f87171'
+                      : 'var(--text-main)'
+                    : '#555',
+                  boxShadow: statusFilter === s
+                    ? s === 'ACTIVE' ? 'inset 0 0 8px rgba(34,197,94,0.15)'
+                      : s === 'IGNORED' ? 'inset 0 0 8px rgba(239,68,68,0.15)'
+                      : 'inset 0 0 8px rgba(102,252,241,0.12)'
+                    : 'none',
+                }}
+              >
+                {s === 'ALL' ? 'ALL' : s}
+              </button>
+            ))}
+          </div>
         </div>
-        {/* Toolbar End */}
       </div>
 
-      {/* Ashby scan feedback toast */}
-      {ashbyMessage && (
-        <div style={{
+      {/* ── Date Filter Panel — always visible ───────────────────────────── */}
+      <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '1rem',
+          padding: '0.75rem 1rem',
           marginBottom: '1rem',
-          padding: '0.5rem 1rem',
-          background: 'rgba(108, 99, 255, 0.15)',
-          border: '1px solid #6c63ff',
-          color: '#a78bfa',
-          fontSize: '0.85rem',
-          letterSpacing: '1px',
+          border: '1px solid var(--border-color)',
+          borderRadius: '3px',
+          background: 'rgba(255,193,7,0.04)',
           flexShrink: 0,
+          flexWrap: 'wrap',
         }}>
-          {ashbyMessage}
-        </div>
-      )}
+          {/* Hour-window presets */}
+          <span style={{ color: '#666', fontSize: '0.78rem', letterSpacing: '1px', userSelect: 'none', flexShrink: 0 }}>POSTED WITHIN:</span>
+          <div style={{ display: 'flex', border: '1px solid var(--border-color)', borderRadius: '3px', overflow: 'hidden' }}>
+            {(['15MIN', '30MIN', '1HR', '2HR', '4HR', '8HR', '24HR', 'ALL'] as DatePreset[]).map((p, i, arr) => (
+              <button
+                key={p}
+                onClick={() => setDatePreset(p)}
+                style={{
+                  padding: '0.3rem 0.7rem',
+                  fontSize: '0.75rem',
+                  fontFamily: 'inherit',
+                  fontWeight: 'bold',
+                  letterSpacing: '1px',
+                  textTransform: 'uppercase',
+                  border: 'none',
+                  borderRight: i < arr.length - 1 ? '1px solid var(--border-color)' : 'none',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  background: datePreset === p ? 'rgba(255,193,7,0.2)' : 'transparent',
+                  color: datePreset === p ? 'var(--accent)' : '#555',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {PRESET_LABELS[p]}
+              </button>
+            ))}
+          </div>
+
+          {/* Divider */}
+          <span style={{ color: '#333', fontSize: '0.8rem', userSelect: 'none' }}>|</span>
+
+          {/* Custom range */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span style={{ color: '#555', fontSize: '0.75rem', letterSpacing: '1px', flexShrink: 0 }}>FROM</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={e => { setDateFrom(e.target.value); setDatePreset('ALL'); }}
+              style={{
+                background: 'rgba(0,0,0,0.5)',
+                border: '1px solid var(--border-color)',
+                color: dateFrom ? 'var(--text-main)' : '#555',
+                padding: '0.25rem 0.5rem',
+                fontFamily: 'inherit',
+                fontSize: '0.8rem',
+                letterSpacing: '0.5px',
+                outline: 'none',
+                borderRadius: '2px',
+                colorScheme: 'dark',
+              }}
+            />
+            <span style={{ color: '#555', fontSize: '0.75rem', letterSpacing: '1px', flexShrink: 0 }}>TO</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={e => { setDateTo(e.target.value); setDatePreset('ALL'); }}
+              style={{
+                background: 'rgba(0,0,0,0.5)',
+                border: '1px solid var(--border-color)',
+                color: dateTo ? 'var(--text-main)' : '#555',
+                padding: '0.25rem 0.5rem',
+                fontFamily: 'inherit',
+                fontSize: '0.8rem',
+                letterSpacing: '0.5px',
+                outline: 'none',
+                borderRadius: '2px',
+                colorScheme: 'dark',
+              }}
+            />
+          </div>
+
+          {/* Clear */}
+          {isDateActive && (
+            <button
+              onClick={() => { setDatePreset('ALL'); setDateFrom(''); setDateTo(''); }}
+              style={{
+                padding: '0.25rem 0.6rem',
+                fontSize: '0.75rem',
+                fontFamily: 'inherit',
+                letterSpacing: '1px',
+                border: '1px solid #333',
+                borderRadius: '2px',
+                background: 'transparent',
+                color: '#555',
+                cursor: 'pointer',
+                textTransform: 'uppercase',
+              }}
+            >
+              CLEAR ✕
+            </button>
+          )}
+      </div>
+
+
 
       {loading && <p>SCANNING LOCAL RECORDS...</p>}
       {error && <div className="status-message">{error}</div>}
