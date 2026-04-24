@@ -19,7 +19,4 @@ No extension source code was modified during this reorganization.
 
 jq 'select(.record.message | contains("Listing failed"))' apps/server/logs/jobvis_2026-04-14.log
 
-bash /tmp/jobvis-main/start.sh --prod
-
-
-git worktree remove /tmp/jobvis-main && git checkout main && git merge pipeline-upgrade && git checkout pipeline-upgrade && git worktree add /tmp/jobvis-main main
+apps/server/venv/bin/pip install -r apps/server/requirements.txt --force-reinstall

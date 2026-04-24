@@ -1126,3 +1126,51 @@ tracked_companies:
     source: lever
     slug: extremenetworks
     enabled: true
+  - name: affirm
+    source: greenhouse
+    slug: affirm
+    enabled: true
+  - name: processstreet
+    source: greenhouse
+    slug: processstreet
+    enabled: true
+  - name: xebiacee
+    source: greenhouse
+    slug: xebiacee
+    enabled: true
+  - name: assystinc
+    source: greenhouse
+    slug: assystinc
+    enabled: true
+  - name: life360
+    source: greenhouse
+    slug: life360
+    enabled: true
+  - name: x9
+    source: greenhouse
+    slug: x9
+    enabled: true
+  - name: buzzsolutions
+    source: greenhouse
+    slug: buzzsolutions
+    enabled: true
+  - name: quidient
+    source: greenhouse
+    slug: quidient
+    enabled: true
+  - name: toast
+    source: greenhouse
+    slug: toast
+    enabled: true
+  - name: systemstechnologyresearch
+    source: greenhouse
+    slug: systemstechnologyresearch
+    enabled: true
+  - name: tlatechinc
+    source: greenhouse
+    slug: tlatechinc
+    enabled: true
+  - name: postman
+    source: greenhouse
+    slug: postman
+    enabled: true
