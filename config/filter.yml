@@ -66,6 +66,9 @@ title_filter:
     - "director"
     - "Camera"
     - "EMEA"
+    - "Test"
+    - "Devops"
+    - "C++"
 
 job_description_filter:
   include_any:
