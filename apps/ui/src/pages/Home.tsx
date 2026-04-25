@@ -66,7 +66,7 @@ function Home() {
   const [isDeleting, setIsDeleting] = useState(false);
 
   // ── Date filter state ─────────────────────────────────────────────────────
-  const [datePreset, setDatePreset] = useState<DatePreset>('ALL');
+  const [datePreset, setDatePreset] = useState<DatePreset>('24HR');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
 
