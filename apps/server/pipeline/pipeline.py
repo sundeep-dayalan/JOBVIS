@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Tuple
 import models
 from .preprocessors.title_filter import title_filter
 from .preprocessors.jd_filter import job_description_filter
+from .preprocessors.location_filter import location_filter
 from logger import logger
 
 class JobPipeline:
@@ -27,6 +28,10 @@ class JobPipeline:
         desc_filter_config = self.filter_config.get('job_description_filter', {})
         self.desc_includes = [i.lower() for i in desc_filter_config.get('include_any', [])]
         self.desc_excludes = [e.lower() for e in desc_filter_config.get('exclude_any', [])]
+        self.desc_pattern_excludes = desc_filter_config.get('description_pattern_excludes', [])
+
+        loc_filter_config = self.filter_config.get('location_filter', {})
+        self.allowed_locations = loc_filter_config.get('include_any', [])
 
     def apply_preliminary_filters(self, job: Dict[str, Any]) -> Tuple[str, str]:
         """Runs preliminary filters. Returns (status, ignore_reason)."""
@@ -39,20 +44,29 @@ class JobPipeline:
             
         title = title.lower()
         status, ignore_reason = title_filter(title, self.includes, self.excludes)
-        
+
         if status == "IGNORED":
             logger.debug("[Pipeline] Job '{}' ignored: {}", job.get('title'), ignore_reason)
             return status, ignore_reason
-            
+
+        # Location gate — runs before JD fetch to cheaply drop non-US jobs
+        raw_location = job.get('location')
+        status, ignore_reason = location_filter(raw_location, self.allowed_locations)
+        if status == "IGNORED":
+            logger.debug("[Pipeline] Job '{}' ignored: {}", job.get('title'), ignore_reason)
+            return status, ignore_reason
+
         description = job.get('description')
         if not description:
             logger.debug("[Pipeline] Job missing description, skipping description filter.")
         else:
             description = description.lower()
-            status, ignore_reason = job_description_filter(description, self.desc_includes, self.desc_excludes)
+            status, ignore_reason = job_description_filter(
+                description, self.desc_includes, self.desc_excludes, self.desc_pattern_excludes
+            )
             if status == "IGNORED":
                 logger.debug("[Pipeline] Job '{}' ignored: {}", job.get('title'), ignore_reason)
-                
+
         return status, ignore_reason
 
     def filter_and_deduplicate(self, jobs: List[Dict[str, Any]], db: Session, force_rescan: bool = False) -> Dict[str, Any]:

@@ -135,18 +135,72 @@ job_description_filter:
     - "TS/SCI"
     - "DoD clearance"
     - "US citizenship required"
-    
-    
+
+  # Regex patterns matched against raw description text (case-insensitive).
+  # Any match immediately ignores the job in the preliminary filter.
+  description_pattern_excludes:
+    # Hourly pay ranges:  $40 – $150/hour  |  $25/hr  |  45/hour  |  USD 30/hr
+    - '\$?\d+(?:\.\d+)?\s*(?:–|-|to)\s*\$?\d+(?:\.\d+)?\s*/\s*h(?:ou)?r'
+    # Single hourly rate:  $55/hour  |  $28/hr  |  55/hour
+    - '\$\d+(?:\.\d+)?\s*/\s*h(?:ou)?r'
+    # Explicit per-hour phrases:  "45 per hour"  |  "$55 per hour"
+    - '\$?\d+(?:\.\d+)?\s+per\s+hour'
+
 
 location_filter:
+  # Allowlist: ONLY Washington state (WA) jobs and remote jobs are allowed.
+  # A missing / blank location is passed through (filtered later by the LLM).
   include_any:
-    - remote
-    - washington
-    - seattle
-    - Bellevue
-    - Redmond
-    - Kirkland
-    - WA
+    # ── Remote variants ──────────────────────────────────────────────────────
+    - "remote"
+    - "remote us"
+    - "remote - us"
+    - "remote (us"
+    - "us remote"
+    - "remote, united states"
+    - "remote, usa"
+    - "anywhere in the us"
+    - "anywhere in us"
+    - "work from home"
+    - "distributed"
+    - "anywhere"
+
+    # ── Washington State — city names ────────────────────────────────────────
+    - "seattle"
+    - "bellevue"
+    - "redmond"
+    - "kirkland"
+    - "tacoma"
+    - "olympia"
+    - "bothell"
+    - "sammamish"
+    - "issaquah"
+    - "renton"
+    - "kent"
+    - "federal way"
+    - "auburn"
+    - "everett"
+    - "shoreline"
+    - "burien"
+    - "lakewood"
+    - "marysville"
+    - "lacey"
+    - "pasco"
+    - "richland"
+    - "kennewick"
+    - "spokane"
+    - "vancouver"         # Vancouver, WA (not BC)
+    - "bellingham"
+    - "yakima"
+    - "walla walla"
+
+    # ── Washington State — abbreviation / suffix patterns ────────────────────
+    - ", wa"              # "Seattle, WA" / "Bellevue, WA 98004"
+    - ", wa "
+    - " wa "
+    - "(wa)"
+    - "washington state"
+    - ", washington"      # e.g. "Seattle, Washington"
 
 linkedin-filter:
   ignore_easy_apply: true
