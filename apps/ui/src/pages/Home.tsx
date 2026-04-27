@@ -1,3 +1,4 @@
+import { API_BASE, WS_BASE } from '../config'
 import { useEffect, useState } from 'react';
 
 export type JobStatusEnum = 'ACTIVE' | 'IGNORED' | 'ALL';
@@ -74,7 +75,7 @@ function Home() {
 
   const fetchJobsData = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/jobs');
+      const res = await fetch(API_BASE + '/api/jobs');
       if (!res.ok) throw new Error('Response not okay');
       const data = await res.json();
       const jobsArr = Array.isArray(data) ? data : [];
@@ -95,7 +96,7 @@ function Home() {
     if (selectedRescanIds.size === 0 || isMovingStatus) return;
     setIsMovingStatus(true);
     try {
-      await fetch('http://localhost:8000/api/jobs/status', {
+      await fetch(API_BASE + '/api/jobs/status', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -121,7 +122,7 @@ function Home() {
     if (!confirmed) return;
     setIsDeleting(true);
     try {
-      await fetch('http://localhost:8000/api/jobs', {
+      await fetch(API_BASE + '/api/jobs', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ job_ids: Array.from(selectedRescanIds) }),
@@ -240,7 +241,7 @@ function Home() {
                 if (selectedRescanIds.size === 0) return;
                 setIsRescanning(true);
                 try {
-                  await fetch('http://localhost:8000/api/rescan', {
+                  await fetch(API_BASE + '/api/rescan', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ job_ids: Array.from(selectedRescanIds) })

@@ -1,3 +1,4 @@
+import { API_BASE, WS_BASE } from '../config'
 import { useState, useEffect, useRef } from 'react'
 import './Settings.css'
 
@@ -477,7 +478,7 @@ function SchedulerControl({
       return
     }
     const poll = () => {
-      fetch('http://localhost:8000/api/scheduler/status')
+      fetch(API_BASE + '/api/scheduler/status')
         .then(r => r.json())
         .then(data => {
           const task = data?.tasks?.[source]
@@ -526,7 +527,7 @@ function SchedulerControl({
       setProgress(0)
       setJobRunning(true)
       setTimeout(() => {
-        fetch('http://localhost:8000/api/scheduler/status')
+        fetch(API_BASE + '/api/scheduler/status')
           .then(r => r.json())
           .then(data => {
             const task = data?.tasks?.[source]
@@ -903,7 +904,7 @@ function AshbyPortalPanel() {
 
   const fetchPortals = () => {
     setLoading(true)
-    fetch('http://localhost:8000/api/portals')
+    fetch(API_BASE + '/api/portals')
       .then(r => r.json())
       .then((data: Portal[]) => setPortals(data.filter(p => p.source === 'ashby')))
       .catch(() => setFeedback('Could not load portals — is the server running?'))
@@ -954,7 +955,7 @@ function AshbyPortalPanel() {
     setCsvPending(false)
     setFeedback(null)
     try {
-      const res = await fetch('http://localhost:8000/api/portals/import', {
+      const res = await fetch(API_BASE + '/api/portals/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newEntries),
@@ -1078,7 +1079,7 @@ function GreenhousePortalPanel() {
 
   const fetchPortals = () => {
     setLoading(true)
-    fetch('http://localhost:8000/api/portals')
+    fetch(API_BASE + '/api/portals')
       .then(r => r.json())
       .then((data: Portal[]) => setPortals(data.filter(p => p.source === 'greenhouse')))
       .catch(() => setFeedback('Could not load portals — is the server running?'))
@@ -1096,7 +1097,7 @@ function GreenhousePortalPanel() {
     setSubmitting(true)
     setFeedback(null)
     try {
-      const res = await fetch('http://localhost:8000/api/portals/import', {
+      const res = await fetch(API_BASE + '/api/portals/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify([{ source: 'greenhouse', slug: t, name: n || t }]),
@@ -1155,7 +1156,7 @@ function GreenhousePortalPanel() {
     }
     setImporting(true); setCsvPending(false); setFeedback(null)
     try {
-      const res = await fetch('http://localhost:8000/api/portals/import', {
+      const res = await fetch(API_BASE + '/api/portals/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newEntries),
@@ -1303,7 +1304,7 @@ function LeverPortalPanel() {
 
   const fetchPortals = () => {
     setLoading(true)
-    fetch('http://localhost:8000/api/portals')
+    fetch(API_BASE + '/api/portals')
       .then(r => r.json())
       .then((data: Portal[]) => setPortals(data.filter(p => p.source === 'lever')))
       .catch(() => setFeedback('Could not load portals — is the server running?'))
@@ -1321,7 +1322,7 @@ function LeverPortalPanel() {
     setSubmitting(true)
     setFeedback(null)
     try {
-      const res = await fetch('http://localhost:8000/api/portals/import', {
+      const res = await fetch(API_BASE + '/api/portals/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify([{ source: 'lever', slug: t, name: n || t }]),
@@ -1380,7 +1381,7 @@ function LeverPortalPanel() {
     }
     setImporting(true); setCsvPending(false); setFeedback(null)
     try {
-      const res = await fetch('http://localhost:8000/api/portals/import', {
+      const res = await fetch(API_BASE + '/api/portals/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newEntries),
@@ -1548,7 +1549,7 @@ function LinkedInAutoScrapePanel({
   const [triggering, setTriggering]   = useState(false)
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/portals/linkedin')
+    fetch(API_BASE + '/api/portals/linkedin')
       .then(r => r.ok ? r.json() : [])
       .then(data => { if (Array.isArray(data)) setUrls(data) })
       .catch(() => {})
@@ -1559,7 +1560,7 @@ function LinkedInAutoScrapePanel({
     let destroyed = false
     function connect() {
       if (destroyed) return
-      ws = new WebSocket('ws://localhost:8000/ws/extension-sync')
+      ws = new WebSocket(WS_BASE + '/ws/extension-sync')
       ws.onmessage = e => { try { setExtStatus(JSON.parse(e.data)) } catch {} }
       ws.onclose   = () => { if (!destroyed) setTimeout(connect, 5000) }
     }
@@ -1571,7 +1572,7 @@ function LinkedInAutoScrapePanel({
     setUrlSaving(true)
     setUrlFeedback(null)
     try {
-      const res = await fetch('http://localhost:8000/api/portals/linkedin', {
+      const res = await fetch(API_BASE + '/api/portals/linkedin', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(next),
@@ -1596,7 +1597,7 @@ function LinkedInAutoScrapePanel({
 
   const triggerNow = async () => {
     setTriggering(true)
-    try { await fetch('http://localhost:8000/api/extension/trigger', { method: 'POST' }) }
+    try { await fetch(API_BASE + '/api/extension/trigger', { method: 'POST' }) }
     catch { /* ignore */ }
     finally { setTimeout(() => setTriggering(false), 2000) }
   }
@@ -1832,13 +1833,13 @@ function LinkedInDeepScanPanel() {
       setLoading(true); setStatus(null)
       setLogs(['[SYSTEM] Opening telemetry socket to backend...'])
 
-      const ws = new WebSocket('ws://localhost:8000/ws/deepscan')
+      const ws = new WebSocket(WS_BASE + '/ws/deepscan')
       wsRef.current = ws
 
       ws.onopen = async () => {
         setLogs(prev => [...prev, '[SYSTEM] Socket connected. Transmitting Deep Scan payload...'])
         try {
-          const res = await fetch('http://localhost:8000/api/deepscan', {
+          const res = await fetch(API_BASE + '/api/deepscan', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ linkedinScrapeData: parsedData }),
@@ -1969,7 +1970,7 @@ export default function Settings() {
   const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/settings')
+    fetch(API_BASE + '/api/settings')
       .then(r => r.json())
       .then(setSettings)
       .catch(() => setSettings({
@@ -1990,7 +1991,7 @@ export default function Settings() {
     const prev = settings
     setSettings({ ...settings, pipeline: { ...settings.pipeline, [key]: value } })
     try {
-      const res = await fetch('http://localhost:8000/api/settings', {
+      const res = await fetch(API_BASE + '/api/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pipeline: { [key]: value } }),
@@ -2018,7 +2019,7 @@ export default function Settings() {
       },
     })
     try {
-      const res = await fetch('http://localhost:8000/api/settings', {
+      const res = await fetch(API_BASE + '/api/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scheduler: { [source]: patch } }),
@@ -2027,7 +2028,7 @@ export default function Settings() {
       setSettings(await res.json())
       // Notify extension that LinkedIn settings changed — it will reconfigure alarm + open standby tab
       if (source === 'linkedin') {
-        fetch('http://localhost:8000/api/extension/notify', {
+        fetch(API_BASE + '/api/extension/notify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ type: 'settings_changed' }),

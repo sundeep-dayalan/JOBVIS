@@ -1,3 +1,4 @@
+import { API_BASE, WS_BASE } from './config'
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import Home from './pages/Home'
@@ -9,7 +10,7 @@ function EnvBanner() {
   const [env, setEnv] = useState<'dev' | 'prod' | null>(null)
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/env')
+    fetch(API_BASE + '/api/env')
       .then(r => r.json())
       .then(d => setEnv(d.env === 'prod' ? 'prod' : 'dev'))
       .catch(() => setEnv('dev')) // default assume dev if unreachable
@@ -60,7 +61,7 @@ function App() {
   const [env, setEnv] = useState<'dev' | 'prod' | null>(null)
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/env')
+    fetch(API_BASE + '/api/env')
       .then(r => r.json())
       .then(d => {
         const resolvedEnv = d.env === 'prod' ? 'prod' : 'dev'

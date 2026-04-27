@@ -1,3 +1,4 @@
+import { API_BASE, WS_BASE } from '../config'
 import { useEffect, useState } from 'react';
 
 function History() {
@@ -6,7 +7,7 @@ function History() {
 
   const fetchScans = () => {
     setLoading(true);
-    fetch('http://localhost:8000/api/scans')
+    fetch(API_BASE + '/api/scans')
       .then(res => res.json())
       .then(data => setScans(Array.isArray(data) ? data : []))
       .catch(console.error)

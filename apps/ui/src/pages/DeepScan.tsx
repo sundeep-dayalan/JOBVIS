@@ -1,3 +1,4 @@
+import { API_BASE, WS_BASE } from '../config'
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 
@@ -37,14 +38,14 @@ function DeepScan() {
       setLogs(["[SYSTEM] Opening telemetry socket to backend..."])
 
       // Initialize the WebSocket connection tracking this scan
-      const ws = new WebSocket("ws://localhost:8000/ws/deepscan")
+      const ws = new WebSocket(WS_BASE + "/ws/deepscan")
       wsRef.current = ws
       
       ws.onopen = async () => {
           setLogs(prev => [...prev, "[SYSTEM] Socket connected. Transmitting Deep Scan payload..."])
           
           try {
-              const response = await fetch('http://localhost:8000/api/deepscan', {
+              const response = await fetch(API_BASE + '/api/deepscan', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
