@@ -367,9 +367,11 @@ function Home() {
                     ? s === 'ACTIVE'  ? '#4ade80'
                       : s === 'APPLIED' ? '#818cf8'
                       : s === 'IGNORED' ? '#f87171'
+                      : 'var(--text-primary)'   // ALL
                     : '#555',
                   boxShadow: statusFilter === s
-                    ? s === 'ACTIVE' ? 'inset 0 0 8px rgba(34,197,94,0.15)'
+                    ? s === 'ACTIVE'  ? 'inset 0 0 8px rgba(34,197,94,0.15)'
+                      : s === 'APPLIED' ? 'inset 0 0 8px rgba(99,102,241,0.15)'
                       : s === 'IGNORED' ? 'inset 0 0 8px rgba(239,68,68,0.15)'
                       : 'inset 0 0 8px rgba(102,252,241,0.12)'
                     : 'none',
