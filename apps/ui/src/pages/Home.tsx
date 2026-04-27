@@ -1,7 +1,7 @@
 import { API_BASE, WS_BASE } from '../config'
 import { useEffect, useState } from 'react';
 
-export type JobStatusEnum = 'ACTIVE' | 'IGNORED' | 'ALL';
+export type JobStatusEnum = 'ACTIVE' | 'IGNORED' | 'APPLIED' | 'ALL';
 
 type DatePreset = '15MIN' | '30MIN' | '1HR' | '2HR' | '4HR' | '8HR' | '24HR' | 'ALL';
 
@@ -92,7 +92,7 @@ function Home() {
     fetchJobsData();
   }, []);
 
-  const bulkMoveStatus = async (targetStatus: 'ACTIVE' | 'IGNORED') => {
+  const bulkMoveStatus = async (targetStatus: 'ACTIVE' | 'IGNORED' | 'APPLIED') => {
     if (selectedRescanIds.size === 0 || isMovingStatus) return;
     setIsMovingStatus(true);
     try {
@@ -273,10 +273,28 @@ function Home() {
                   }}
                   disabled={isMovingStatus}
                   onClick={() => bulkMoveStatus('ACTIVE')}
+                  style={{ background: isMovingStatus ? '' : 'rgba(34,197,94,0.12)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}
                 >
                   {isMovingStatus ? '...' : 'ACTIVE'}
                 </button>
                 <button
+                  id="btn-bulk-applied"
+                  className="btn"
+                  style={{
+                    padding: '0.4rem 0.75rem',
+                    fontSize: '0.82rem',
+                    background: isMovingStatus ? '' : 'rgba(99,102,241,0.12)',
+                    border: '1px solid rgba(99,102,241,0.3)',
+                    color: '#818cf8',
+                    opacity: isMovingStatus ? 0.5 : 1,
+                  }}
+                  disabled={isMovingStatus}
+                  onClick={() => bulkMoveStatus('APPLIED')}
+                >
+                  {isMovingStatus ? '...' : 'APPLIED'}
+                </button>
+                <button
+                  id="btn-bulk-ignored"
                   className="btn"
                   style={{
                     padding: '0.4rem 0.75rem',
@@ -324,7 +342,7 @@ function Home() {
             overflow: 'hidden',
             flexShrink: 0,
           }}>
-            {(['ALL', 'ACTIVE', 'IGNORED'] as JobStatusEnum[]).map(s => (
+            {(['ALL', 'ACTIVE', 'APPLIED', 'IGNORED'] as JobStatusEnum[]).map(s => (
               <button
                 key={s}
                 onClick={() => setStatusFilter(s)}
@@ -340,14 +358,15 @@ function Home() {
                   cursor: 'pointer',
                   transition: 'all 0.18s ease',
                   background: statusFilter === s
-                    ? s === 'ACTIVE' ? 'rgba(34,197,94,0.18)'
+                    ? s === 'ACTIVE'  ? 'rgba(34,197,94,0.18)'
+                      : s === 'APPLIED' ? 'rgba(99,102,241,0.18)'
                       : s === 'IGNORED' ? 'rgba(239,68,68,0.18)'
-                      : 'rgba(102,252,241,0.12)'
+                      : 'rgba(255,255,255,0.08)'
                     : 'transparent',
                   color: statusFilter === s
-                    ? s === 'ACTIVE' ? '#4ade80'
+                    ? s === 'ACTIVE'  ? '#4ade80'
+                      : s === 'APPLIED' ? '#818cf8'
                       : s === 'IGNORED' ? '#f87171'
-                      : 'var(--text-main)'
                     : '#555',
                   boxShadow: statusFilter === s
                     ? s === 'ACTIVE' ? 'inset 0 0 8px rgba(34,197,94,0.15)'
@@ -496,7 +515,11 @@ function Home() {
                   cursor: 'pointer',
                   transition: 'all 0.3s ease',
                   opacity: job.status === 'IGNORED' ? 0.6 : 1,
-                  borderLeft: selectedJobId === job.id ? '4px solid var(--text-main)' : '1px solid var(--border-color)'
+                  borderLeft: selectedJobId === job.id
+                    ? '4px solid var(--text-main)'
+                    : job.status === 'APPLIED' ? '3px solid #818cf8'
+                    : job.status === 'IGNORED' ? '3px solid rgba(239,68,68,0.4)'
+                    : '3px solid transparent',
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
@@ -547,6 +570,11 @@ function Home() {
                 <div style={{ color: 'var(--accent)', marginBottom: '0.25rem', fontSize: '0.9rem' }}>{job.company_name}</div>
                 <div style={{ fontSize: '0.85rem', color: '#888' }}>{job.location || 'UNKNOWN'}</div>
 
+                {job.status === 'APPLIED' && (
+                  <div style={{ fontSize: '0.78rem', color: '#818cf8', marginTop: '0.5rem', background: 'rgba(99,102,241,0.12)', display: 'inline-block', padding: '0.2rem 0.6rem', borderRadius: '4px', border: '1px solid rgba(99,102,241,0.3)' }}>
+                    ✓ APPLIED
+                  </div>
+                )}
                 {job.status === 'IGNORED' && job.ignore_reason && (
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginTop: '0.75rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem', fontStyle: 'italic' }}>
                     [REASON] {job.ignore_reason}

@@ -48,8 +48,9 @@ app = FastAPI()
 
 # --- STRICT API CONTRACTS ---
 class JobStatus(str, Enum):
-    ACTIVE = "ACTIVE"
+    ACTIVE  = "ACTIVE"
     IGNORED = "IGNORED"
+    APPLIED = "APPLIED"
 
 class AIAnalysisModel(BaseModel):
     score: Optional[float] = None
@@ -1282,13 +1283,13 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
 
 class BulkStatusUpdate(BaseModel):
     job_ids: List[str]
-    status: JobStatus  # "ACTIVE" or "IGNORED"
+    status: JobStatus  # "ACTIVE", "IGNORED", or "APPLIED"
     reason: Optional[str] = None  # optional ignore reason (used when moving to IGNORED)
 
 @app.patch("/api/jobs/status")
 def bulk_update_status(payload: BulkStatusUpdate, db: Session = Depends(database.get_db)):
     """
-    Bulk-move a list of jobs to ACTIVE or IGNORED.
+    Bulk-move a list of jobs to ACTIVE, IGNORED, or APPLIED.
     Appends a MANUAL_STATUS_CHANGE entry to each job's activity_log.
     """
     if not payload.job_ids:
