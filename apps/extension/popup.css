@@ -36,6 +36,46 @@ body {
   text-transform: uppercase;
 }
 
+/* ── Dev-mode env badge ───────────────────────────────────────── */
+.env-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  margin-top: 6px;
+  text-transform: uppercase;
+}
+.env-badge--dev {
+  background: rgba(251,191,36,0.15);
+  border: 1px solid rgba(251,191,36,0.5);
+  color: #fbbf24;
+  animation: envPulse 2s ease-in-out infinite alternate;
+}
+@keyframes envPulse {
+  from { box-shadow: 0 0 0 rgba(251,191,36,0); }
+  to   { box-shadow: 0 0 8px rgba(251,191,36,0.45); }
+}
+
+/* ── Dev stripe banner ────────────────────────────────────────── */
+.env-stripe {
+  display: none;
+  padding: 5px 14px;
+  font-size: 10px;
+  color: rgba(251,191,36,0.8);
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid rgba(251,191,36,0.3);
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(251,191,36,0.07),
+    rgba(251,191,36,0.07) 8px,
+    rgba(0,0,0,0) 8px,
+    rgba(0,0,0,0) 16px
+  );
+}
+.env-stripe--visible { display: block; }
+
 /* ── Source bar ─────────────────────────────────────────────── */
 .source-bar {
   display: flex;

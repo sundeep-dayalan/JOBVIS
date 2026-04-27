@@ -164,6 +164,7 @@ location_filter:
     - "work from home"
     - "distributed"
     - "anywhere"
+    - "United States"
 
     # ── Washington State — city names ────────────────────────────────────────
     - "seattle"

@@ -46,6 +46,9 @@ const sourceBar      = document.getElementById('sourceBar');
 const sourceDot      = document.getElementById('sourceDot');
 const sourceLabel    = document.getElementById('sourceLabel');
 const configSection  = document.getElementById('configSection');
+const envBadgeEl     = document.getElementById('envBadge');
+const envStripeEl    = document.getElementById('envStripe');
+const appHeaderEl    = document.getElementById('appHeader');
 
 let pollInterval = null;
 let currentJobs  = [];
@@ -264,9 +267,35 @@ clearBtn.addEventListener('click', async () => {
   showMessage('Data cleared.');
 });
 
+// ─── Env detection ────────────────────────────────────────────
+
+async function applyEnvBadge() {
+  try {
+    const res  = await fetch('http://localhost:8000/api/env');
+    const data = await res.json();
+    const env  = data.env === 'prod' ? 'prod' : 'dev';
+    const logoEl = document.querySelector('.logo');
+
+    if (env === 'dev') {
+      if (logoEl) { logoEl.textContent = 'JOBVIS · (DEV)'; logoEl.style.color = '#fbbf24'; }
+      envBadgeEl.textContent   = '⚠ DEV MODE';
+      envBadgeEl.className     = 'env-badge env-badge--dev';
+      envBadgeEl.style.display = 'inline-block';
+      envStripeEl.classList.add('env-stripe--visible');
+      appHeaderEl.style.borderBottom = '1px solid rgba(251,191,36,0.4)';
+    } else {
+      if (logoEl) { logoEl.textContent = 'JOBVIS · (PROD)'; logoEl.style.color = '#34d399'; }
+    }
+  } catch {
+    // Server unreachable — silently skip
+  }
+}
+
 // ─── Init ─────────────────────────────────────────────────────
 
 async function init() {
+  applyEnvBadge();
+
   const tab = await getActiveTab();
   activeSource = detectSource(tab?.url);
   applySourceTheme(activeSource);

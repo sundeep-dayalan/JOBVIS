@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "JOBVIS - Multi-Source Job Scraper",
+  "name": "JOBVIS - (DEV)",
   "version": "3.0.0",
   "description": "Scrape job listings from LinkedIn and Ashby job boards and export as standardized JSON",
   "permissions": ["activeTab", "scripting", "storage", "tabs", "downloads", "cookies"],

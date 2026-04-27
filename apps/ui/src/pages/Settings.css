@@ -27,9 +27,16 @@
   --step-lever-5: #c2410c;
 
   /* LinkedIn lane colors */
-  --step-li-1: #38bdf8;
-  --step-li-2: #0ea5e9;
-  --step-li-3: #0284c7;
+  --step-li-1:  #38bdf8;
+  --step-li-2:  #0ea5e9;
+  --step-li-3:  #0284c7;
+  --step-li-4:  #a78bfa;
+  --step-li-5:  #f59e0b;
+  --step-li-6:  #fb923c;
+  --step-li-7:  #34d399;
+  --step-li-8:  #f472b6;
+  --step-li-9:  #facc15;
+  --step-li-10: #60a5fa;
 
   /* Shared eval pipeline colors */
   --step-dedup:     #a78bfa;

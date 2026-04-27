@@ -64,6 +64,7 @@ class JobResponse(BaseModel):
     apply_url: Optional[str] = None
     job_posted_at: Optional[str] = None
     job_updated_at: Optional[str] = None
+    created_at: Optional[str] = None   # DB insert timestamp — used for UI date filtering
     source: Optional[str] = None
     status: JobStatus
     ignore_reason: Optional[str] = None
@@ -206,6 +207,7 @@ origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"chrome-extension://.*",  # Allow JOBVIS Chrome extension (any ID)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -349,6 +351,12 @@ def _load_portals(source: Optional[str] = None, enabled_only: bool = True) -> li
 def get_settings():
     """Returns the current runtime settings."""
     return _load_settings()
+
+
+@app.get("/api/env")
+def get_env():
+    """Returns the current runtime environment (dev or prod)."""
+    return {"env": _APP_ENV}
 
 
 class PipelineSettingsPatch(BaseModel):
@@ -1208,6 +1216,7 @@ def get_jobs(db: Session = Depends(database.get_db)):
             "apply_url": job.apply_url,
             "job_posted_at": job.job_posted_at,
             "job_updated_at": job.job_updated_at,
+            "created_at": job.created_at.isoformat() if job.created_at else None,
             "source": job.source,
             "status": job.status,
             "ignore_reason": job.ignore_reason,

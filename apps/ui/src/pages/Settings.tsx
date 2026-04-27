@@ -248,6 +248,81 @@ const LINKEDIN_STEPS: FlowStep[] = [
     color: 'var(--step-li-3)',
     details: ['linkedinDataMapper()', 'source: "linkedin"', 'raw_data archive attached', 'Passthrough — no field renaming'],
   },
+  {
+    id: 'li-dedup',
+    icon: '⊘',
+    label: 'DEDUP',
+    sublabel: 'Pre-pipeline dedup',
+    description: 'O(1) DB lookup against all known source_ids scoped by source. ACTIVE→ACTIVE and IGNORED→IGNORED duplicates are dropped entirely. Only new or force-rescanned jobs advance.',
+    color: 'var(--step-li-4)',
+    details: ['filter_and_deduplicate()', 'DB cache hit check', 'source: "linkedin"', 'force_rescan support', 'IGNORED→ACTIVE upserts'],
+  },
+  {
+    id: 'li-title',
+    icon: '🔤',
+    label: 'TITLE PRE-FILTER',
+    sublabel: 'Early keyword discard',
+    description: 'Title matched against include/exclude keyword lists from filter.yml. Mismatched titles are immediately IGNORED before any expensive processing.',
+    color: 'var(--step-li-5)',
+    details: ['title_filter()', 'include_any keywords', 'exclude_any keywords', 'Case-insensitive match'],
+  },
+  {
+    id: 'li-loc',
+    icon: '📍',
+    label: 'LOCATION FILTER',
+    sublabel: 'Geo gate',
+    description: 'Location checked against the allowed_locations list from filter.yml before any JD fetch. Jobs with non-matching locations are immediately IGNORED to save cost.',
+    color: 'var(--step-li-6)',
+    details: ['location_filter()', 'Runs before JD fetch', 'include_any locations', 'Case-insensitive match'],
+  },
+  {
+    id: 'li-jd',
+    icon: '📄',
+    label: 'JD FILTER',
+    sublabel: 'Description screen',
+    description: 'Full job description is inspected using configurable keyword rules and regex pattern excludes. Jobs matching exclusion terms (e.g. "$40/hour") are discarded.',
+    color: 'var(--step-li-6)',
+    details: ['job_description_filter()', 'Positive keyword gate', 'Exclusion term rejection', 'Pattern exclude (regex)', 'Missing JD passthrough'],
+  },
+  {
+    id: 'li-strip',
+    icon: '✂',
+    label: 'JD STRIPPER',
+    sublabel: 'Noise reduction',
+    description: 'Preprocessor that removes boilerplate, legalese, and filler from job descriptions before LLM token consumption — reducing noise and API cost.',
+    color: 'var(--step-li-7)',
+    details: ['strip_jd()', 'Boilerplate removal', 'Token optimisation'],
+  },
+  {
+    id: 'li-llm',
+    icon: '🤖',
+    label: 'AI SCORING',
+    sublabel: 'LLM evaluation',
+    description: 'Surviving jobs are sent to the configured LLM (Ollama local or cloud). The JobMatchAnalyst prompt evaluates CV fit and returns a JSON score + reason.',
+    color: 'var(--step-li-8)',
+    details: ['evaluate_single_job()', 'temperature=0.0', 'JSON response format', 'Semaphore concurrency'],
+    toggleKey: 'ai_scoring_enabled',
+    toggleLabel: 'AI Scoring',
+    toggleWarning: 'When disabled, all jobs that pass keyword filters are saved as ACTIVE with no score. The LLM is never called — pipeline completes instantly.',
+  },
+  {
+    id: 'li-threshold',
+    icon: '⚡',
+    label: 'THRESHOLD',
+    sublabel: 'Score gate',
+    description: 'AI score compared against threshold (default 2.5/5). Jobs below threshold are marked IGNORED with reason "AI Score < 2.5". High scorers pass.',
+    color: 'var(--step-li-9)',
+    details: ['Score ≥ 2.5 → ACTIVE', 'Score < 2.5 → IGNORED', 'Configurable threshold'],
+  },
+  {
+    id: 'li-persist',
+    icon: '💾',
+    label: 'PERSIST',
+    sublabel: 'Database write',
+    description: 'Final job record is written to PostgreSQL with full activity log, AI analysis, score, and source metadata. Scan session telemetry is also committed.',
+    color: 'var(--step-li-10)',
+    details: ['PostgreSQL INSERT/UPDATE', 'Activity log trail', 'ScanSession telemetry', 'source: "linkedin"'],
+  },
 ]
 
 // ── Shared evaluation pipeline steps ─────────────────────────────────────────
@@ -588,6 +663,7 @@ function PipelineStep({
   settingValue,
   onSettingToggle,
   saving,
+  extraContent,
 }: {
   step: FlowStep
   index: number
@@ -596,6 +672,7 @@ function PipelineStep({
   settingValue?: boolean
   onSettingToggle?: (val: boolean) => void
   saving: boolean
+  extraContent?: React.ReactNode
 }) {
   const isDisabled = step.toggleKey !== undefined && settingValue === false
 
@@ -652,6 +729,12 @@ function PipelineStep({
               {!settingValue && step.toggleWarning && (
                 <p className="step-toggle-warning">⚠ {step.toggleWarning}</p>
               )}
+            </div>
+          )}
+
+          {extraContent && (
+            <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid color-mix(in srgb, var(--step-color) 14%, rgba(102,252,241,0.07))' }}>
+              {extraContent}
             </div>
           )}
         </div>
@@ -1431,6 +1514,122 @@ function LeverPortalPanel() {
   )
 }
 
+// ─── LinkedIn Deep Scan Panel ─────────────────────────────────────────────────
+
+function LinkedInDeepScanPanel() {
+  const [jsonData, setJsonData] = useState('')
+  const [status, setStatus]     = useState<string | null>(null)
+  const [loading, setLoading]   = useState(false)
+  const [logs, setLogs]         = useState<string[]>([])
+  const [open, setOpen]         = useState(false)
+
+  const wsRef      = useRef<WebSocket | null>(null)
+  const termRef    = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (termRef.current) termRef.current.scrollTop = termRef.current.scrollHeight
+  }, [logs])
+
+  useEffect(() => () => { wsRef.current?.close() }, [])
+
+  const handleSubmit = async () => {
+    if (!jsonData.trim()) { setStatus('ERROR: PLEASE ENTER JSON DATA'); return }
+    try {
+      const parsedData = JSON.parse(jsonData)
+      setLoading(true); setStatus(null)
+      setLogs(['[SYSTEM] Opening telemetry socket to backend...'])
+
+      const ws = new WebSocket('ws://localhost:8000/ws/deepscan')
+      wsRef.current = ws
+
+      ws.onopen = async () => {
+        setLogs(prev => [...prev, '[SYSTEM] Socket connected. Transmitting Deep Scan payload...'])
+        try {
+          const res = await fetch('http://localhost:8000/api/deepscan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ linkedinScrapeData: parsedData }),
+          })
+          if (!res.ok) { setStatus(`ERROR: BACKEND RETURNED ${res.status}`); setLoading(false); ws.close() }
+          else { setJsonData('') }
+        } catch { setStatus('ERROR: POST FAILED'); setLoading(false); ws.close() }
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          setLogs(prev => [...prev, data.message])
+          if (data.type === 'complete') {
+            setTimeout(() => { setLoading(false); setOpen(false) }, 2500)
+          }
+        } catch { /* ignore */ }
+      }
+
+      ws.onerror = () => { setStatus('ERROR: SOCKET CONNECTION FAILED'); setLoading(false) }
+    } catch {
+      setStatus('ERROR: INVALID JSON OR CONNECTION FAILED')
+      setLoading(false)
+      wsRef.current?.close()
+    }
+  }
+
+  return (
+    <div style={{ marginTop: '0.75rem' }}>
+      <button
+        className="portal-import-btn"
+        style={{ width: '100%', justifyContent: 'center', padding: '0.6rem 1rem', fontSize: '0.8rem', letterSpacing: '1.5px' }}
+        onClick={() => { setOpen(o => !o); setStatus(null) }}
+        disabled={loading}
+      >
+        {loading ? '⏳ SCANNING...' : open ? '✕ CLOSE DEEP SCAN' : '⚡ INITIATE DEEP SCAN'}
+      </button>
+
+      {open && (
+        <div style={{ marginTop: '0.75rem', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '1rem', background: 'rgba(0,0,0,0.3)' }}>
+          {!loading ? (
+            <>
+              <label style={{ display: 'block', fontSize: '0.75rem', letterSpacing: '1px', color: '#888', marginBottom: '0.5rem' }}>
+                LINKEDIN SCRAPED JSON PAYLOAD
+              </label>
+              <textarea
+                className="form-control"
+                placeholder='{"key": "value"}'
+                value={jsonData}
+                onChange={e => setJsonData(e.target.value)}
+                style={{ minHeight: '140px', fontFamily: 'monospace', fontSize: '0.8rem', resize: 'vertical' }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.75rem' }}>
+                <button className="btn btn-accent" style={{ padding: '0.4rem 1.2rem', fontSize: '0.82rem' }} onClick={handleSubmit}>
+                  INITIATE SCAN
+                </button>
+              </div>
+            </>
+          ) : (
+            <div
+              ref={termRef}
+              style={{
+                backgroundColor: '#000', border: '1px solid var(--accent)', padding: '1rem',
+                height: '260px', overflowY: 'auto', fontFamily: 'monospace',
+                color: 'var(--accent)', fontSize: '0.8rem', borderRadius: '3px',
+              }}
+            >
+              {logs.map((log, i) => <div key={i} style={{ marginBottom: '0.2rem' }}>&gt; {log}</div>)}
+              <div style={{ display: 'inline-block', width: '8px', height: '1em', backgroundColor: 'var(--accent)', animation: 'blink 1s step-end infinite' }} />
+            </div>
+          )}
+          {status && (
+            <div className="status-message" style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}>{status}</div>
+          )}
+        </div>
+      )}
+
+      <style>{`
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+      `}</style>
+    </div>
+  )
+}
+
 // ─── Provider card (expandable for Ashby / Greenhouse) ───────────────────────
 
 function ProviderCard({ provider }: { provider: typeof PROVIDERS[number] }) {
@@ -1674,7 +1873,10 @@ export default function Settings() {
                   index={i}
                   isOpen={openStep === step.id}
                   onToggle={() => toggle(step.id)}
+                  settingValue={step.toggleKey ? settings?.pipeline[step.toggleKey] : undefined}
+                  onSettingToggle={step.toggleKey ? (val) => toggleSetting(step.toggleKey!, val) : undefined}
                   saving={saving}
+                  extraContent={step.id === 'li-ext' ? <LinkedInDeepScanPanel /> : undefined}
                 />
                 {i < LINKEDIN_STEPS.length - 1 && <Connector />}
               </div>

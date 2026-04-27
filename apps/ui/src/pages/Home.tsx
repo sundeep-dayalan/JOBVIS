@@ -46,6 +46,7 @@ export interface IJobPosition {
   apply_url?: string;
   job_posted_at?: string;
   job_updated_at?: string;
+  created_at?: string;          // DB insert timestamp — used for date filtering
   source?: string;
   status: JobStatusEnum;
   ignore_reason?: string;
@@ -162,26 +163,28 @@ function Home() {
   const statusFiltered = statusFilter === 'ALL' ? jobs : jobs.filter(job => job.status === statusFilter);
 
   const filteredJobs = statusFiltered.filter(job => {
-    const posted = parseDateStr(job.job_posted_at);
+    // Always filter on created_at (DB insert time) — NOT job_posted_at (LinkedIn posting date).
+    // A job posted a week ago on LinkedIn but scanned 5 minutes ago must appear in the 15 MIN window.
+    const scanned = parseDateStr(job.created_at);
 
     // Hour-based preset window
     const hours = PRESET_HOURS[datePreset];
-    if (hours !== null && posted) {
+    if (hours !== null && scanned) {
       const cutoff = new Date(Date.now() - hours * 3_600_000);
-      if (posted < cutoff) return false;
+      if (scanned < cutoff) return false;
     }
 
     // Custom FROM/TO date pickers (only active when preset is ALL)
     if (datePreset === 'ALL') {
-      if (dateFrom && posted) {
+      if (dateFrom && scanned) {
         const from = new Date(dateFrom);
         from.setHours(0, 0, 0, 0);
-        if (posted < from) return false;
+        if (scanned < from) return false;
       }
-      if (dateTo && posted) {
+      if (dateTo && scanned) {
         const to = new Date(dateTo);
         to.setHours(23, 59, 59, 999);
-        if (posted > to) return false;
+        if (scanned > to) return false;
       }
     }
 
