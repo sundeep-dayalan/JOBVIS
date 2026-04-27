@@ -557,13 +557,18 @@ _extension_sync_manager = ConnectionManager()
 
 @app.websocket("/ws/extension-sync")
 async def websocket_extension_sync(websocket: WebSocket):
-    """Settings page connects here to receive live extension status updates."""
+    """Settings page connects here to receive live extension status updates.
+    MV3 service workers connect and disconnect frequently — all disconnects are handled silently."""
     await _extension_sync_manager.connect(websocket)
-    await websocket.send_json(_extension_status)
     try:
+        # Send current status immediately on connect
+        await websocket.send_json(_extension_status)
         while True:
             await websocket.receive_text()
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, Exception):
+        # Extension disconnected (normal for MV3 service workers) — clean up silently
+        pass
+    finally:
         _extension_sync_manager.disconnect(websocket)
 
 
