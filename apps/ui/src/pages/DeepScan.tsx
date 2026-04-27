@@ -50,7 +50,7 @@ function DeepScan() {
                 headers: {
                   'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ linkedinScrapeData: parsedData })
+                body: JSON.stringify({ jobs: parsedData })
               })
         
               if (!response.ok) {

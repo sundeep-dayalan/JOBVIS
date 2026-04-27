@@ -215,14 +215,17 @@ app.add_middleware(
 
 @app.post("/api/deepscan")
 async def receive_deepscan(request: Request, db: Session = Depends(database.get_db)):
-    # Retrieve the JSON payload
     data = await request.json()
-    
-    # Extract and parse utilizing dedicated standard mapper
-    raw_jobs = data.get("linkedinScrapeData", []) if isinstance(data, dict) else []
+    raw_jobs = data.get("jobs", []) if isinstance(data, dict) else []
+
+    if not raw_jobs:
+        logger.warning("[DeepScan] /api/deepscan received empty payload — no jobs to process")
+        return {"total_processed": 0, "status": "ignored", "message": "No jobs in payload"}
+
     jobs = [linkedinDataMapper(rj) for rj in raw_jobs]
-    
+    logger.info("[DeepScan] Received {} job(s)", len(jobs))
     return await execute_job_pipeline(jobs, db, force_rescan=False)
+
 
 class RescanRequest(BaseModel):
     job_ids: List[str]
