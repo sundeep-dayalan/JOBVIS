@@ -521,7 +521,7 @@ function SchedulerControl({
   const handleRunNow = async () => {
     setTriggerRunning(true)
     try {
-      await fetch(`http://localhost:8000/api/scheduler/trigger/${source}`, { method: 'POST' })
+      await fetch(`${API_BASE}/api/scheduler/trigger/${source}`, { method: 'POST' })
       setNextRunAt(null)
       setCountdown('')
       setProgress(0)

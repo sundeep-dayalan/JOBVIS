@@ -21,7 +21,7 @@ function History() {
   const handleDelete = (id: string) => {
     if(!confirm("Destroy this entire scan? All dynamically related child jobs will be purged immediately.")) return;
     
-    fetch(`http://localhost:8000/api/scans/${id}`, { method: 'DELETE' })
+    fetch(`${API_BASE}/api/scans/${id}`, { method: 'DELETE' })
       .then(res => res.json())
       .then(data => {
         if(data.status === 'success') fetchScans();
