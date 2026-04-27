@@ -271,24 +271,39 @@ async function runScrapeCycle(forceRun = false) {
       // Give the page a moment to fully render before content script starts
       await sleep(2000);
 
-      // Tell content script to start scraping in auto mode
+      // Tell content script to start scraping in auto mode.
+      // Retry up to 8x (1s apart) — MV3 content script can take several seconds
+      // after page load to inject, causing "Receiving end does not exist" on first try.
       let jobs = [];
       try {
-        await new Promise((resolve, reject) => {
-          chrome.tabs.sendMessage(
-            tabId,
-            {
-              action: 'start',
-              mode: 'auto',
-              config: { maxPages: 5, delay: 800, batchSize: 5 },
-            },
-            (reply) => {
-              if (chrome.runtime.lastError) return reject(chrome.runtime.lastError);
-              if (!reply?.ok) return reject(new Error(reply?.reason || 'start rejected'));
-              resolve();
-            }
-          );
-        });
+        let started = false;
+        for (let attempt = 0; attempt < 8; attempt++) {
+          try {
+            await new Promise((resolve, reject) => {
+              chrome.tabs.sendMessage(
+                tabId,
+                {
+                  action: 'start',
+                  mode: 'auto',
+                  config: { maxPages: 5, delay: 800, batchSize: 5 },
+                },
+                (reply) => {
+                  if (chrome.runtime.lastError) return reject(chrome.runtime.lastError);
+                  if (!reply?.ok) return reject(new Error(reply?.reason || 'start rejected'));
+                  resolve();
+                }
+              );
+            });
+            started = true;
+            break; // sendMessage succeeded — content script is alive
+          } catch (err) {
+            const isNotReady = err.message?.includes('Receiving end does not exist') ||
+                               err.message?.includes('Could not establish connection');
+            if (!isNotReady || attempt === 7) throw err; // non-retryable or out of retries
+            console.warn(`[JOBVIS BG] Content script not ready yet (attempt ${attempt + 1}/8), retrying in 1s...`);
+            await sleep(1000);
+          }
+        }
 
         // Poll chrome.storage.local until scraping completes (max 10 min)
         const deadline = Date.now() + 10 * 60_000;

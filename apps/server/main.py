@@ -481,7 +481,13 @@ async def trigger_scheduler_job(job_name: str):
     Immediately triggers a scheduled job.
     If the scheduler is sleeping, it wakes it and resets the timer.
     If the scheduler is disabled, fires the job once directly as a background task.
+    LinkedIn is extension-driven — routes to /api/extension/trigger.
     """
+    # LinkedIn is scraped by the Chrome extension, not the server scheduler
+    if job_name == "linkedin":
+        logger.info("[Scheduler] /trigger/linkedin — routing to extension trigger")
+        return await trigger_extension_scrape()
+
     if job_name not in _VALID_SCHEDULER_JOBS:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"Unknown scheduler job: '{job_name}'")
