@@ -264,17 +264,18 @@ function Home() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                 <span style={{ color: '#555', fontSize: '0.8rem', letterSpacing: '1px', userSelect: 'none' }}>MOVE TO →</span>
                 <button
+                  id="btn-bulk-active"
                   className="btn"
                   style={{
                     padding: '0.4rem 0.75rem',
                     fontSize: '0.82rem',
-                    borderColor: '#22c55e',
+                    background: isMovingStatus ? '' : 'rgba(34,197,94,0.12)',
+                    border: '1px solid rgba(34,197,94,0.3)',
                     color: '#4ade80',
                     opacity: isMovingStatus ? 0.5 : 1,
                   }}
                   disabled={isMovingStatus}
                   onClick={() => bulkMoveStatus('ACTIVE')}
-                  style={{ background: isMovingStatus ? '' : 'rgba(34,197,94,0.12)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}
                 >
                   {isMovingStatus ? '...' : 'ACTIVE'}
                 </button>
