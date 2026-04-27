@@ -619,10 +619,12 @@ async def trigger_extension_scrape():
 
 @app.post("/api/extension/notify")
 async def notify_extension(payload: dict):
-    """Broadcast a message to the extension. Also queues the type as a heartbeat command."""
+    """Broadcast a message to the extension via extension-sync WS.
+    Only trigger_now is queued for heartbeat fallback — settings_changed is WS-only
+    to prevent duplicate tab creation from double-firing."""
     global _pending_extension_commands
-    if payload.get("type"):
-        _pending_extension_commands.append(payload["type"])
+    if payload.get("type") == "trigger_now":
+        _pending_extension_commands.append("trigger_now")
     await _extension_sync_manager.broadcast(payload)
     return {"ok": True}
 
