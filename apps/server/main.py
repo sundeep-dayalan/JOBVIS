@@ -66,6 +66,7 @@ class JobResponse(BaseModel):
     job_posted_at: Optional[str] = None
     job_updated_at: Optional[str] = None
     created_at: Optional[str] = None   # DB insert timestamp — used for UI date filtering
+    updated_at: Optional[str] = None   # Last status/field change — drives sort order
     source: Optional[str] = None
     status: JobStatus
     ignore_reason: Optional[str] = None
@@ -116,11 +117,19 @@ async def startup_event():
         try:
             database.ensure_database_exists()
             models.Base.metadata.create_all(bind=database.engine)
-            # Safe migration: add activity_log column to existing DBs that predate this feature
+            # Safe migrations for existing DBs
             with database.engine.connect() as conn:
                 conn.execute(_sql_text(
                     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS "
                     "activity_log JSONB DEFAULT '[]'::jsonb"
+                ))
+                conn.execute(_sql_text(
+                    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS "
+                    "updated_at TIMESTAMPTZ DEFAULT NOW()"
+                ))
+                # Backfill: set updated_at = created_at for rows that predate this column
+                conn.execute(_sql_text(
+                    "UPDATE jobs SET updated_at = created_at WHERE updated_at IS NULL"
                 ))
                 conn.commit()
             logger.info("[Server] Database connected and initialized gracefully.")
@@ -1364,7 +1373,7 @@ def bulk_delete_jobs(payload: BulkDeleteRequest, db: Session = Depends(database.
 
 @app.get("/api/jobs", response_model=List[JobResponse])
 def get_jobs(db: Session = Depends(database.get_db)):
-    jobs = db.query(models.JobPosition).order_by(models.JobPosition.created_at.desc()).all()
+    jobs = db.query(models.JobPosition).order_by(models.JobPosition.updated_at.desc()).all()
     return [
         {
             "id": str(job.id),
@@ -1376,6 +1385,7 @@ def get_jobs(db: Session = Depends(database.get_db)):
             "job_posted_at": job.job_posted_at,
             "job_updated_at": job.job_updated_at,
             "created_at": job.created_at.isoformat() if job.created_at else None,
+            "updated_at": job.updated_at.isoformat() if job.updated_at else None,
             "source": job.source,
             "status": job.status,
             "ignore_reason": job.ignore_reason,

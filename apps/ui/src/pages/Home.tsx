@@ -48,6 +48,7 @@ export interface IJobPosition {
   job_posted_at?: string;
   job_updated_at?: string;
   created_at?: string;          // DB insert timestamp — used for date filtering
+  updated_at?: string;          // Last status change — drives sort order
   source?: string;
   status: JobStatusEnum;
   ignore_reason?: string;
