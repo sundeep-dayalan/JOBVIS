@@ -271,7 +271,7 @@ clearBtn.addEventListener('click', async () => {
 
 async function applyEnvBadge() {
   try {
-    const res  = await fetch('http://localhost:8000/api/env');
+    const res  = await fetch('http://localhost:8001/api/env');
     const data = await res.json();
     const env  = data.env === 'prod' ? 'prod' : 'dev';
     const logoEl = document.querySelector('.logo');

@@ -8,8 +8,8 @@
 
 'use strict';
 
-const API_BASE        = 'http://localhost:8000';
-const WS_BASE         = 'ws://localhost:8000';
+const API_BASE        = 'http://localhost:8001';
+const WS_BASE         = 'ws://localhost:8001';
 const ALARM_NAME      = 'jobvis_auto_scrape';
 const ALARM_HEARTBEAT = 'jobvis_heartbeat';
 const STORAGE_STATE_KEY = 'jobvis_state';
@@ -17,11 +17,12 @@ const STORAGE_JOBS_KEY  = 'jobvis_jobs';
 
 // ─── In-memory state (reset on service-worker restart) ────────────────────────
 
-let _scraping       = false;
-let _nextScrapeAt   = null;
-let _lastScraped    = null;
-let _lastError      = null;
-let _currentUrlName = null;
+let _scraping            = false;
+let _nextScrapeAt        = null;
+let _lastScraped         = null;
+let _lastError           = null;
+let _currentUrlName      = null;
+let _intentionalTabClose = false; // set true when WE close the tab so onRemoved doesn't error
 
 // ─── Server WebSocket — listens for trigger_now commands ────────────────────
 // Keeping an open WS also prevents MV3 service-worker suspension.
@@ -165,23 +166,35 @@ async function isReservedTabOpen() {
   } catch { return false; }
 }
 
+let _tabCreationLock = false;
+
 async function ensureReservedTab(initialUrl) {
-  // If tab already exists, return it. Otherwise create a new one.
-  const tabId = await getReservedTabId();
-  if (tabId) {
-    try {
-      await chrome.tabs.get(tabId);
-      return tabId;
-    } catch { /* tab was closed */ }
+  // Guard: if two concurrent calls race (e.g., WS + heartbeat command both fire),
+  // only the first creates a tab; the second waits and returns the stored id.
+  if (_tabCreationLock) {
+    await new Promise(r => setTimeout(r, 700));
+    return await getReservedTabId();
   }
-  // Open a new hidden (background) tab
-  const tab = await chrome.tabs.create({
-    url: initialUrl,
-    active: false,   // don't steal focus
-    pinned: true,    // pin so it's harder to accidentally close
-  });
-  await setReservedTabId(tab.id);
-  return tab.id;
+  _tabCreationLock = true;
+  try {
+    const tabId = await getReservedTabId();
+    if (tabId) {
+      try {
+        await chrome.tabs.get(tabId);
+        return tabId;   // tab already open — nothing to do
+      } catch { /* tab was closed externally */ }
+    }
+    // Open a new pinned background tab
+    const tab = await chrome.tabs.create({
+      url: initialUrl,
+      active: false,
+      pinned: true,
+    });
+    await setReservedTabId(tab.id);
+    return tab.id;
+  } finally {
+    _tabCreationLock = false;
+  }
 }
 
 async function navigateReservedTab(tabId, url) {
@@ -385,7 +398,23 @@ async function reconfigureAlarm() {
   } else {
     await chrome.alarms.clear(ALARM_NAME);
     _nextScrapeAt = null;
-    console.log('[JOBVIS BG] Auto-scrape disabled. Alarm cleared.');
+    _lastError    = null; // clear any previous error so re-enable starts clean
+    console.log('[JOBVIS BG] Auto-scrape disabled. Alarm cleared — closing reserved tab.');
+
+    // Close the reserved tab that was opened when auto-scrape was enabled.
+    // Set flag so the onRemoved listener knows this is intentional (not user-closed).
+    const tabId = await getReservedTabId();
+    if (tabId) {
+      _intentionalTabClose = true;
+      try {
+        await chrome.tabs.remove(tabId);
+        console.log(`[JOBVIS BG] Reserved tab ${tabId} closed.`);
+      } catch {
+        // Tab was already closed by the user — that's fine
+      }
+      _intentionalTabClose = false;
+      await clearReservedTabId();
+    }
   }
 
   // Heartbeat alarm: every 30s to keep server in sync
@@ -394,21 +423,49 @@ async function reconfigureAlarm() {
 
 // ─── Event listeners ──────────────────────────────────────────────────────────
 
-chrome.runtime.onInstalled.addListener(async () => {
-  console.log('[JOBVIS] Extension installed / updated');
+/**
+ * Disable LinkedIn auto-scrape on the server and clear the stored reserved tab.
+ * Called on every extension install/reload so the user must explicitly re-enable
+ * from the Settings page — prevents surprise tab openings on reload.
+ */
+async function disableLinkedInOnReload() {
+  try {
+    // Tell server to set linkedin enabled=false
+    await fetch(`${API_BASE}/api/settings`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scheduler: { linkedin: { enabled: false } } }),
+    });
+    console.log('[JOBVIS BG] Auto-scrape disabled on extension reload.');
+  } catch {
+    console.warn('[JOBVIS BG] Could not reach server to disable auto-scrape (server may be starting).');
+  }
+  // Clear stored tab ID — old tab (if any) becomes an orphan; don't reuse it
+  await clearReservedTabId();
+}
+
+chrome.runtime.onInstalled.addListener(async (details) => {
+  console.log(`[JOBVIS] Extension ${details.reason} — disabling auto-scrape for safety`);
   connectServerWs();
-  await reconfigureAlarm();
+  // Always disable auto-scrape on install/reload to prevent unexpected tab opening.
+  // User must re-enable manually from the Settings page.
+  await disableLinkedInOnReload();
+  await reconfigureAlarm();   // sees enabled=false → clears alarm, skips tab creation
   await postHeartbeat();
 });
 
 chrome.runtime.onStartup.addListener(async () => {
+  // Browser started: honour the previously saved setting (user intentionally started browser)
   console.log('[JOBVIS] Browser started — reconfiguring alarms');
   connectServerWs();
   await reconfigureAlarm();
   await postHeartbeat();
 });
 
-// Connect WS immediately when service worker loads (e.g. after extension reload)
+// Connect WS + send initial heartbeat when service worker first loads.
+// Do NOT call reconfigureAlarm() here — onInstalled handles the install/reload case,
+// and onStartup handles browser restart. Calling it here would re-open tabs on
+// every service-worker wake-up (which Chrome MV3 does frequently).
 connectServerWs();
 postHeartbeat();
 
@@ -425,8 +482,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   }
 });
 
-// Detect if user closes the reserved tab
+// Detect if user manually closes the reserved tab
 chrome.tabs.onRemoved.addListener(async (tabId) => {
+  if (_intentionalTabClose) return; // we closed it ourselves (on disable) — not an error
   const reservedId = await getReservedTabId();
   if (tabId === reservedId) {
     console.warn('[JOBVIS BG] Reserved tab was closed by user!');
