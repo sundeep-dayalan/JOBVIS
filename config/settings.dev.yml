@@ -13,5 +13,5 @@ scheduler:
     enabled: true
     interval_minutes: 15
   linkedin:
-    enabled: true
+    enabled: false
     interval_minutes: 60

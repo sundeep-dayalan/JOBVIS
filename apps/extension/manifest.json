@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "JOBVIS - (PROD)",
+  "name": "JOBVIS - (DEV)",
   "version": "3.0.0",
   "description": "Scrape job listings from LinkedIn and Ashby job boards and export as standardized JSON",
   "permissions": ["activeTab", "scripting", "storage", "tabs", "downloads", "cookies", "alarms"],
@@ -8,6 +8,7 @@
     "https://www.linkedin.com/*",
     "https://jobs.ashbyhq.com/*",
     "https://api.ashbyhq.com/*",
+    "http://localhost:8000/*",
     "http://localhost:8001/*"
   ],
   "action": {
@@ -27,5 +28,11 @@
   ],
   "background": {
     "service_worker": "background.js"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["config.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }
