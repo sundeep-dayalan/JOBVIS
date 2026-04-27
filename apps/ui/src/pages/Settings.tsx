@@ -17,18 +17,10 @@ interface AppSettings {
     greenhouse_description_fetch_enabled: boolean
   }
   scheduler: {
-    ashby: {
-      enabled: boolean
-      interval_minutes: number
-    }
-    greenhouse: {
-      enabled: boolean
-      interval_minutes: number
-    }
-    lever: {
-      enabled: boolean
-      interval_minutes: number
-    }
+    ashby: { enabled: boolean; interval_minutes: number }
+    greenhouse: { enabled: boolean; interval_minutes: number }
+    lever: { enabled: boolean; interval_minutes: number }
+    linkedin: { enabled: boolean; interval_minutes: number }
   }
 }
 
@@ -1514,6 +1506,307 @@ function LeverPortalPanel() {
   )
 }
 
+// ─── LinkedIn Auto-Scrape Panel ───────────────────────────────────────────────
+// Compact version that fits cleanly inside the lane column (same width as SchedulerControl)
+
+interface LiUrl { name: string; url: string; enabled: boolean }
+interface ExtStatus {
+  connected: boolean
+  status: string
+  tab_open: boolean
+  last_scraped: string | null
+  next_scrape_at: string | null
+  error: string | null
+  current_url_name: string | null
+}
+
+const LI_INTERVALS = [15, 30, 60, 120, 240]
+
+function LinkedInAutoScrapePanel({
+  settings,
+  onToggle,
+  onInterval,
+  saving,
+}: {
+  settings: AppSettings | null
+  onToggle: (v: boolean) => void
+  onInterval: (v: number) => void
+  saving: boolean
+}) {
+  const liCfg = (settings?.scheduler as any)?.linkedin ?? { enabled: false, interval_minutes: 30 }
+
+  const [urls, setUrls]               = useState<LiUrl[]>([])
+  const [urlSaving, setUrlSaving]     = useState(false)
+  const [urlFeedback, setUrlFeedback] = useState<string | null>(null)
+  const [addName, setAddName]         = useState('')
+  const [addUrl, setAddUrl]           = useState('')
+  const [showUrls, setShowUrls]       = useState(false)
+  const [extStatus, setExtStatus]     = useState<ExtStatus>({
+    connected: false, status: 'disconnected', tab_open: false,
+    last_scraped: null, next_scrape_at: null, error: null, current_url_name: null,
+  })
+  const [triggering, setTriggering]   = useState(false)
+
+  useEffect(() => {
+    fetch('http://localhost:8000/api/portals/linkedin')
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { if (Array.isArray(data)) setUrls(data) })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    let ws: WebSocket
+    let destroyed = false
+    function connect() {
+      if (destroyed) return
+      ws = new WebSocket('ws://localhost:8000/ws/extension-sync')
+      ws.onmessage = e => { try { setExtStatus(JSON.parse(e.data)) } catch {} }
+      ws.onclose   = () => { if (!destroyed) setTimeout(connect, 5000) }
+    }
+    connect()
+    return () => { destroyed = true; ws?.close() }
+  }, [])
+
+  const saveUrls = async (next: LiUrl[]) => {
+    setUrlSaving(true)
+    setUrlFeedback(null)
+    try {
+      const res = await fetch('http://localhost:8000/api/portals/linkedin', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(next),
+      })
+      if (!res.ok) throw new Error()
+      setUrls(await res.json())
+      setUrlFeedback(`Saved`)
+    } catch {
+      setUrlFeedback('Save failed')
+    } finally {
+      setUrlSaving(false)
+    }
+  }
+
+  const addNewUrl  = () => {
+    if (!addUrl.trim()) return
+    setUrls(prev => [...prev, { name: addName.trim() || 'Search URL', url: addUrl.trim(), enabled: true }])
+    setAddName(''); setAddUrl('')
+  }
+  const removeUrl = (i: number) => setUrls(prev => prev.filter((_, idx) => idx !== i))
+  const toggleUrl = (i: number) => setUrls(prev => prev.map((u, idx) => idx === i ? { ...u, enabled: !u.enabled } : u))
+
+  const triggerNow = async () => {
+    setTriggering(true)
+    try { await fetch('http://localhost:8000/api/extension/trigger', { method: 'POST' }) }
+    catch { /* ignore */ }
+    finally { setTimeout(() => setTriggering(false), 2000) }
+  }
+
+  const fmtTime = (iso: string | null) => {
+    if (!iso) return '—'
+    const d = new Date(iso)
+    return isNaN(d.getTime()) ? '—' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
+
+  // Status derived values
+  const statusColor = extStatus.status === 'scraping' ? '#4fa3e8'
+    : extStatus.status === 'error' ? '#ef5350'
+    : extStatus.connected ? '#4caf50' : '#44445a'
+  const statusDot = extStatus.status === 'scraping' ? '⟳'
+    : extStatus.connected ? '●' : '○'
+  const statusText = extStatus.status === 'scraping'
+    ? (extStatus.current_url_name ? `Scraping: ${extStatus.current_url_name}` : 'Scraping…')
+    : extStatus.status === 'error' ? 'Error'
+    : extStatus.connected ? `Connected · Tab ${extStatus.tab_open ? 'open' : 'closed'}`
+    : 'Extension not connected'
+
+  const enabledCount = urls.filter(u => u.enabled).length
+
+  return (
+    <div style={{ marginBottom: '0.5rem' }}>
+
+      {/* ── Extension status row ── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        background: 'rgba(0,0,0,0.25)', borderRadius: '6px',
+        padding: '0.4rem 0.6rem', marginBottom: '0.5rem',
+        border: `1px solid ${statusColor}22`,
+        overflow: 'hidden',
+      }}>
+        <span style={{ fontSize: '0.65rem', color: statusColor, fontWeight: 700, letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0, overflow: 'hidden' }}>
+          <span style={{ flexShrink: 0 }}>{statusDot}</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{statusText}</span>
+        </span>
+        {extStatus.last_scraped && (
+          <span style={{ fontSize: '0.6rem', color: '#44445a', flexShrink: 0, marginLeft: '0.5rem' }}>
+            {fmtTime(extStatus.last_scraped)}
+          </span>
+        )}
+      </div>
+
+      {/* ── Error detail ── */}
+      {extStatus.error && (
+        <div style={{
+          fontSize: '0.62rem', color: '#ef5350',
+          background: 'rgba(181,45,45,0.1)', padding: '0.3rem 0.5rem',
+          borderRadius: '4px', marginBottom: '0.5rem',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }} title={extStatus.error}>
+          ⚠ {extStatus.error}
+        </div>
+      )}
+
+      {/* ── Enable toggle row ── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: '0.68rem', fontWeight: 700, letterSpacing: '1px', color: liCfg.enabled ? '#4fa3e8' : '#55556a' }}>
+            {liCfg.enabled ? 'AUTO-SCRAPE ON' : 'AUTO-SCRAPE OFF'}
+          </div>
+          <div style={{ fontSize: '0.6rem', color: '#44445a' }}>
+            {liCfg.enabled
+              ? `${enabledCount} URL${enabledCount !== 1 ? 's' : ''} · every ${liCfg.interval_minutes < 60 ? `${liCfg.interval_minutes}m` : `${liCfg.interval_minutes / 60}h`}`
+              : 'Enable to schedule extension scraping'}
+          </div>
+        </div>
+        <button
+          id="toggle-linkedin-autoscrape"
+          className={`toggle-sw ${liCfg.enabled ? 'toggle-sw--on' : 'toggle-sw--off'}`}
+          onClick={() => onToggle(!liCfg.enabled)}
+          disabled={saving}
+          aria-label="Toggle LinkedIn auto-scrape"
+          style={{ flexShrink: 0, marginLeft: '0.5rem' }}
+        >
+          <span className="toggle-sw-thumb" />
+        </button>
+      </div>
+
+      {/* ── Interval pills + RUN NOW (only when enabled) ── */}
+      {liCfg.enabled && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginBottom: '0.5rem', alignItems: 'center' }}>
+          {LI_INTERVALS.map(m => (
+            <button
+              key={m}
+              id={`li-interval-${m}`}
+              style={{
+                padding: '2px 8px', borderRadius: '20px', border: 'none',
+                fontSize: '0.63rem', fontWeight: 700, cursor: 'pointer',
+                background: liCfg.interval_minutes === m ? '#0a66c2' : '#1a1a34',
+                color: liCfg.interval_minutes === m ? '#fff' : '#6666aa',
+              }}
+              onClick={() => onInterval(m)}
+              disabled={saving}
+            >
+              {m < 60 ? `${m}m` : `${m / 60}h`}
+            </button>
+          ))}
+          <button
+            id="li-trigger-now"
+            style={{
+              padding: '2px 9px', borderRadius: '20px', border: '1px solid #0a66c2',
+              fontSize: '0.63rem', fontWeight: 700, cursor: triggering ? 'not-allowed' : 'pointer',
+              background: 'transparent', color: '#4fa3e8',
+              marginLeft: 'auto', opacity: triggering ? 0.5 : 1,
+            }}
+            onClick={triggerNow}
+            disabled={triggering || saving}
+          >
+            {triggering ? '⟳' : '⚡ RUN NOW'}
+          </button>
+        </div>
+      )}
+
+      {/* ── URL manager toggle ── */}
+      <button
+        id="li-toggle-urls"
+        onClick={() => setShowUrls(v => !v)}
+        style={{
+          width: '100%', background: 'rgba(0,0,0,0.2)', border: '1px solid #1e1e34',
+          borderRadius: '5px', color: '#6666aa', fontSize: '0.62rem', fontWeight: 700,
+          padding: '0.25rem 0.5rem', cursor: 'pointer', textAlign: 'left',
+          letterSpacing: '0.5px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          marginBottom: showUrls ? '0.4rem' : 0,
+        }}
+      >
+        <span>SEARCH URLS ({enabledCount} active)</span>
+        <span>{showUrls ? '▴' : '▾'}</span>
+      </button>
+
+      {/* ── Collapsible URL list ── */}
+      {showUrls && (
+        <div style={{ overflow: 'hidden' }}>
+          {urls.map((u, i) => (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'center', gap: '0.3rem',
+              background: '#0d0d20', borderRadius: '4px', padding: '0.3rem 0.4rem',
+              marginBottom: '0.25rem', border: '1px solid #1e1e34', minWidth: 0,
+            }}>
+              <button
+                onClick={() => toggleUrl(i)}
+                style={{
+                  width: '8px', height: '8px', borderRadius: '50%', border: 'none',
+                  cursor: 'pointer', flexShrink: 0,
+                  background: u.enabled ? '#4fa3e8' : '#333355',
+                }}
+                title={u.enabled ? 'Enabled' : 'Disabled'}
+              />
+              <span style={{ fontSize: '0.65rem', color: '#c0c0e0', fontWeight: 600, flexShrink: 0, maxWidth: '80px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {u.name}
+              </span>
+              <span style={{ fontSize: '0.58rem', color: '#33334a', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                {u.url}
+              </span>
+              <button
+                onClick={() => removeUrl(i)}
+                style={{ background: 'none', border: 'none', color: '#444460', cursor: 'pointer', fontSize: '0.75rem', flexShrink: 0, lineHeight: 1 }}
+              >✕</button>
+            </div>
+          ))}
+
+          {/* Add row */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', marginTop: '0.3rem' }}>
+            <input
+              id="li-url-name"
+              placeholder="Name (e.g. Seattle SWE)"
+              value={addName}
+              onChange={e => setAddName(e.target.value)}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                padding: '4px 7px', background: '#1a1a30', border: '1px solid #2a2a44',
+                borderRadius: '4px', color: '#d0d0f0', fontSize: '0.68rem',
+              }}
+            />
+            <div style={{ display: 'flex', gap: '0.25rem' }}>
+              <input
+                id="li-url-value"
+                placeholder="https://linkedin.com/jobs/search/?..."
+                value={addUrl}
+                onChange={e => setAddUrl(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addNewUrl()}
+                style={{
+                  flex: 1, minWidth: 0, padding: '4px 7px', background: '#1a1a30',
+                  border: '1px solid #2a2a44', borderRadius: '4px', color: '#d0d0f0', fontSize: '0.68rem',
+                }}
+              />
+              <button id="li-url-add" onClick={addNewUrl} disabled={!addUrl.trim()}
+                style={{ padding: '4px 9px', background: '#1a2a3a', border: '1px solid #2a3d55', borderRadius: '4px', color: '#7ab4f0', fontSize: '0.68rem', cursor: 'pointer', flexShrink: 0, opacity: addUrl.trim() ? 1 : 0.4 }}>
+                +
+              </button>
+              <button id="li-url-save" onClick={() => saveUrls(urls)} disabled={urlSaving}
+                style={{ padding: '4px 9px', background: '#0a66c2', border: 'none', borderRadius: '4px', color: '#fff', fontSize: '0.68rem', cursor: urlSaving ? 'not-allowed' : 'pointer', flexShrink: 0 }}>
+                {urlSaving ? '…' : 'Save'}
+              </button>
+            </div>
+            {urlFeedback && (
+              <div style={{ fontSize: '0.6rem', color: urlFeedback === 'Saved' ? '#4caf50' : '#ef5350' }}>
+                {urlFeedback}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── LinkedIn Deep Scan Panel ─────────────────────────────────────────────────
 
 function LinkedInDeepScanPanel() {
@@ -1682,9 +1975,10 @@ export default function Settings() {
       .catch(() => setSettings({
         pipeline: { ai_scoring_enabled: true, ashby_description_fetch_enabled: true, greenhouse_description_fetch_enabled: true },
         scheduler: {
-          ashby: { enabled: false, interval_minutes: 60 },
+          ashby:      { enabled: false, interval_minutes: 60 },
           greenhouse: { enabled: false, interval_minutes: 60 },
-          lever: { enabled: false, interval_minutes: 60 },
+          lever:      { enabled: false, interval_minutes: 60 },
+          linkedin:   { enabled: false, interval_minutes: 30 },
         },
       }))
   }, [])
@@ -1711,7 +2005,7 @@ export default function Settings() {
     }
   }
 
-  const patchScheduler = async (source: 'ashby' | 'greenhouse' | 'lever', patch: { enabled?: boolean; interval_minutes?: number }) => {
+  const patchScheduler = async (source: 'ashby' | 'greenhouse' | 'lever' | 'linkedin', patch: { enabled?: boolean; interval_minutes?: number }) => {
     if (!settings) return
     setSaving(true)
     setSaveError(null)
@@ -1720,7 +2014,7 @@ export default function Settings() {
       ...settings,
       scheduler: {
         ...settings.scheduler,
-        [source]: { ...settings.scheduler?.[source], ...patch } as AppSettings['scheduler'][typeof source],
+        [source]: { ...(settings.scheduler as any)?.[source], ...patch },
       },
     })
     try {
@@ -1731,6 +2025,14 @@ export default function Settings() {
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       setSettings(await res.json())
+      // Notify extension that LinkedIn settings changed — it will reconfigure alarm + open standby tab
+      if (source === 'linkedin') {
+        fetch('http://localhost:8000/api/extension/notify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'settings_changed' }),
+        }).catch(() => {})
+      }
     } catch {
       setSaveError('Failed to save — server unreachable.')
       setSettings(prev)
@@ -1866,6 +2168,12 @@ export default function Settings() {
               <span className="lane-header-name">LinkedIn</span>
               <span className="lane-header-sub">Chrome Extension injection</span>
             </div>
+            <LinkedInAutoScrapePanel
+              settings={settings}
+              onToggle={enabled => patchScheduler('linkedin', { enabled })}
+              onInterval={minutes => patchScheduler('linkedin', { interval_minutes: minutes })}
+              saving={saving}
+            />
             {LINKEDIN_STEPS.map((step, i) => (
               <div key={step.id}>
                 <PipelineStep

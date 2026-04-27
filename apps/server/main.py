@@ -274,8 +274,8 @@ _SETTINGS_DEFAULTS = {
     },
     "scheduler": {
         "ashby": {
-            "enabled": False,          # opt-in — must be explicitly enabled
-            "interval_minutes": 60,    # base interval; ±1 min jitter applied automatically
+            "enabled": False,
+            "interval_minutes": 60,
         },
         "greenhouse": {
             "enabled": False,
@@ -284,6 +284,10 @@ _SETTINGS_DEFAULTS = {
         "lever": {
             "enabled": False,
             "interval_minutes": 60,
+        },
+        "linkedin": {
+            "enabled": False,          # Driven by Chrome extension, not server
+            "interval_minutes": 30,    # Extension reads this to configure chrome.alarms
         },
     },
 }
@@ -376,10 +380,15 @@ class LeverSchedulerPatch(BaseModel):
     enabled: Optional[bool] = None
     interval_minutes: Optional[int] = None
 
+class LinkedInSchedulerPatch(BaseModel):
+    enabled: Optional[bool] = None
+    interval_minutes: Optional[int] = None
+
 class SchedulerSettingsPatch(BaseModel):
     ashby: Optional[AshbySchedulerPatch] = None
     greenhouse: Optional[GreenhouseSchedulerPatch] = None
     lever: Optional[LeverSchedulerPatch] = None
+    linkedin: Optional[LinkedInSchedulerPatch] = None
 
 class SettingsPatch(BaseModel):
     pipeline: Optional[PipelineSettingsPatch] = None
@@ -416,6 +425,12 @@ def patch_settings(patch: SettingsPatch):
                 lever_cfg["enabled"] = patch.scheduler.lever.enabled
             if patch.scheduler.lever.interval_minutes is not None:
                 lever_cfg["interval_minutes"] = patch.scheduler.lever.interval_minutes
+        if patch.scheduler.linkedin is not None:
+            li_cfg = sched.setdefault("linkedin", dict(_SETTINGS_DEFAULTS["scheduler"]["linkedin"]))
+            if patch.scheduler.linkedin.enabled is not None:
+                li_cfg["enabled"] = patch.scheduler.linkedin.enabled
+            if patch.scheduler.linkedin.interval_minutes is not None:
+                li_cfg["interval_minutes"] = patch.scheduler.linkedin.interval_minutes
     _save_settings(current)
     logger.info("[Settings] Updated: {}", current)
     return current
@@ -477,6 +492,139 @@ def list_portals():
         for e in entries
         if e.get("source") and e.get("slug")
     ]
+
+
+# ─── LinkedIn search URL management ──────────────────────────────────────────
+
+class LinkedInSearchUrl(BaseModel):
+    name: str
+    url: str
+    enabled: bool = True
+
+@app.get("/api/portals/linkedin")
+def get_linkedin_urls():
+    """Returns the linkedin_search_urls list from portals.yml."""
+    try:
+        with open(PORTALS_PATH, 'r') as f:
+            config = yaml.safe_load(f) or {}
+    except Exception as e:
+        logger.warning("[Portals] Could not load portals.yml: {}", e)
+        return []
+    return config.get("linkedin_search_urls", [])
+
+@app.patch("/api/portals/linkedin")
+def patch_linkedin_urls(urls: List[LinkedInSearchUrl]):
+    """Replaces the linkedin_search_urls list in portals.yml atomically."""
+    import tempfile, shutil
+    try:
+        with open(PORTALS_PATH, 'r') as f:
+            config = yaml.safe_load(f) or {}
+    except Exception as e:
+        logger.warning("[Portals] Could not load portals.yml for LinkedIn URL patch: {}", e)
+        config = {}
+    config["linkedin_search_urls"] = [u.dict() for u in urls]
+    tmp = PORTALS_PATH + ".tmp"
+    with open(tmp, 'w') as f:
+        yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    shutil.move(tmp, PORTALS_PATH)
+    logger.info("[Portals] linkedin_search_urls updated: {} entries", len(urls))
+    return config["linkedin_search_urls"]
+
+
+# ─── Extension heartbeat + sync WebSocket ────────────────────────────────────
+# Extension background.js POSTs heartbeats; Settings page listens via WS.
+
+_extension_status: Dict[str, Any] = {
+    "connected": False,
+    "last_seen": None,
+    "status": "disconnected",
+    "tab_open": False,
+    "last_scraped": None,
+    "next_scrape_at": None,
+    "error": None,
+    "current_url_name": None,
+}
+
+# Queued commands for extension to pick up on next heartbeat
+# This works even when the extension WS is not connected (polling fallback)
+_pending_extension_commands: list = []
+
+# WebSocket connections from Settings page clients
+_extension_sync_manager = ConnectionManager()
+
+@app.websocket("/ws/extension-sync")
+async def websocket_extension_sync(websocket: WebSocket):
+    """Settings page connects here to receive live extension status updates."""
+    await _extension_sync_manager.connect(websocket)
+    await websocket.send_json(_extension_status)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        _extension_sync_manager.disconnect(websocket)
+
+
+class ExtensionHeartbeat(BaseModel):
+    status: str = "idle"
+    tab_open: bool = False
+    last_scraped: Optional[str] = None
+    next_scrape_at: Optional[str] = None
+    error: Optional[str] = None
+    current_url_name: Optional[str] = None
+
+@app.post("/api/extension/heartbeat")
+async def extension_heartbeat(hb: ExtensionHeartbeat):
+    """Extension background.js POSTs this every 30s and after each scrape event.
+    Returns any pending commands so the extension can act on them without needing WS."""
+    global _pending_extension_commands
+    _extension_status.update({
+        "connected": True,
+        "last_seen": datetime.now(_tz.utc).isoformat(),
+        "status": hb.status,
+        "tab_open": hb.tab_open,
+        "last_scraped": hb.last_scraped,
+        "next_scrape_at": hb.next_scrape_at,
+        "error": hb.error,
+        "current_url_name": hb.current_url_name,
+    })
+    await _extension_sync_manager.broadcast(_extension_status)
+
+    # Consume and return any pending commands
+    commands = list(_pending_extension_commands)
+    _pending_extension_commands.clear()
+    return {"ok": True, "commands": commands}
+
+@app.get("/api/extension/status")
+async def get_extension_status():
+    """Returns the last known extension status. Marks disconnected if last_seen > 60s."""
+    status = dict(_extension_status)
+    if status.get("last_seen"):
+        try:
+            last = datetime.fromisoformat(status["last_seen"])
+            elapsed = (datetime.now(_tz.utc) - last).total_seconds()
+            if elapsed > 60:
+                status["connected"] = False
+                status["status"] = "disconnected"
+        except Exception:
+            pass
+    return status
+
+@app.post("/api/extension/trigger")
+async def trigger_extension_scrape():
+    """Tells the extension to run a scrape now — via WS broadcast + heartbeat command queue."""
+    global _pending_extension_commands
+    _pending_extension_commands.append("trigger_now")
+    await _extension_sync_manager.broadcast({"type": "trigger_now"})
+    return {"ok": True, "message": "trigger_now queued for extension"}
+
+@app.post("/api/extension/notify")
+async def notify_extension(payload: dict):
+    """Broadcast a message to the extension. Also queues the type as a heartbeat command."""
+    global _pending_extension_commands
+    if payload.get("type"):
+        _pending_extension_commands.append(payload["type"])
+    await _extension_sync_manager.broadcast(payload)
+    return {"ok": True}
 
 
 class PortalImportEntry(BaseModel):

@@ -12,3 +12,6 @@ scheduler:
   lever:
     enabled: true
     interval_minutes: 15
+  linkedin:
+    enabled: false
+    interval_minutes: 30

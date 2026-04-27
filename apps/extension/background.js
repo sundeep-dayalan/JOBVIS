@@ -1,23 +1,475 @@
 // JOBVIS — Background Service Worker (MV3)
-// Handles privileged operations that content scripts cannot perform directly,
-// such as reading HttpOnly cookies (JSESSIONID is required for Voyager API CSRF).
+// Handles:
+//   1. Privileged cookie reads for content scripts (JSESSIONID)
+//   2. LinkedIn auto-scrape scheduler via chrome.alarms
+//   3. Reserved tab lifecycle management (one persistent tab per source)
+//   4. Heartbeat POSTs to /api/extension/heartbeat every 30s
+//   5. Receives trigger_now commands from Settings page via /ws/extension-sync
 
-chrome.runtime.onInstalled.addListener(() => {
-  console.log('[JOBVIS] Extension installed / updated (v2 — two-phase Voyager API)');
+'use strict';
+
+const API_BASE        = 'http://localhost:8000';
+const WS_BASE         = 'ws://localhost:8000';
+const ALARM_NAME      = 'jobvis_auto_scrape';
+const ALARM_HEARTBEAT = 'jobvis_heartbeat';
+const STORAGE_STATE_KEY = 'jobvis_state';
+const STORAGE_JOBS_KEY  = 'jobvis_jobs';
+
+// ─── In-memory state (reset on service-worker restart) ────────────────────────
+
+let _scraping       = false;
+let _nextScrapeAt   = null;
+let _lastScraped    = null;
+let _lastError      = null;
+let _currentUrlName = null;
+
+// ─── Server WebSocket — listens for trigger_now commands ────────────────────
+// Keeping an open WS also prevents MV3 service-worker suspension.
+
+let _serverWs = null;
+let _wsReconnectTimer = null;
+
+function connectServerWs() {
+  if (_serverWs && (_serverWs.readyState === WebSocket.CONNECTING || _serverWs.readyState === WebSocket.OPEN)) {
+    return; // already connected
+  }
+  try {
+    _serverWs = new WebSocket(`${WS_BASE}/ws/extension-sync`);
+
+    _serverWs.onopen = () => {
+      console.log('[JOBVIS BG] WS connected to server');
+      if (_wsReconnectTimer) { clearTimeout(_wsReconnectTimer); _wsReconnectTimer = null; }
+    };
+
+    _serverWs.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'trigger_now') {
+          console.log('[JOBVIS BG] trigger_now received — starting scrape cycle');
+          runScrapeCycle(true);   // forceRun: bypass enabled check
+        } else if (msg.type === 'settings_changed') {
+          console.log('[JOBVIS BG] settings_changed received — reconfiguring alarm + standby tab');
+          reconfigureAlarm().then(() => postHeartbeat());
+        }
+      } catch { /* ignore parse errors */ }
+    };
+
+    _serverWs.onclose = () => {
+      console.log('[JOBVIS BG] WS disconnected — reconnecting in 5s');
+      _serverWs = null;
+      _wsReconnectTimer = setTimeout(connectServerWs, 5000);
+    };
+
+    _serverWs.onerror = () => {
+      // onclose fires after onerror — reconnect handled there
+      _serverWs?.close();
+    };
+
+  } catch (err) {
+    console.warn('[JOBVIS BG] WS connect failed:', err);
+    _wsReconnectTimer = setTimeout(connectServerWs, 5000);
+  }
+}
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+
+async function fetchSettings() {
+  try {
+    const r = await fetch(`${API_BASE}/api/settings`);
+    return await r.json();
+  } catch { return null; }
+}
+
+async function fetchLinkedInUrls() {
+  try {
+    const r = await fetch(`${API_BASE}/api/portals/linkedin`);
+    return await r.json();
+  } catch { return []; }
+}
+
+async function postHeartbeat(extra = {}) {
+  try {
+    const resp = await fetch(`${API_BASE}/api/extension/heartbeat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        status:           _scraping ? 'scraping' : (_lastError ? 'error' : 'idle'),
+        tab_open:         await isReservedTabOpen(),
+        last_scraped:     _lastScraped,
+        next_scrape_at:   _nextScrapeAt,
+        error:            _lastError,
+        current_url_name: _currentUrlName,
+        ...extra,
+      }),
+    });
+    if (!resp.ok) return;
+
+    // Process any commands the server queued for us (polling fallback for when WS is down)
+    const data = await resp.json();
+    if (Array.isArray(data.commands)) {
+      for (const cmd of data.commands) {
+        if (cmd === 'settings_changed') {
+          console.log('[JOBVIS BG] Heartbeat command: settings_changed — reconfiguring alarm');
+          reconfigureAlarm().then(() => postHeartbeat());
+        } else if (cmd === 'trigger_now') {
+          console.log('[JOBVIS BG] Heartbeat command: trigger_now — starting scrape cycle');
+          runScrapeCycle(true);
+        }
+      }
+    }
+  } catch { /* server may be down */ }
+}
+
+function shuffle(arr) {
+  // Fisher-Yates shuffle
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function randomBetween(minMs, maxMs) {
+  return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+}
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+// ─── Reserved tab management ─────────────────────────────────────────────────
+// One persistent tab per scraping session. Stays open 24/7 when auto-scrape is on.
+
+const RESERVED_TAB_KEY = 'jobvis_reserved_tab_id';
+
+async function getReservedTabId() {
+  const data = await chrome.storage.local.get(RESERVED_TAB_KEY);
+  return data[RESERVED_TAB_KEY] ?? null;
+}
+
+async function setReservedTabId(id) {
+  await chrome.storage.local.set({ [RESERVED_TAB_KEY]: id });
+}
+
+async function clearReservedTabId() {
+  await chrome.storage.local.remove(RESERVED_TAB_KEY);
+}
+
+async function isReservedTabOpen() {
+  const tabId = await getReservedTabId();
+  if (!tabId) return false;
+  try {
+    await chrome.tabs.get(tabId);
+    return true;
+  } catch { return false; }
+}
+
+async function ensureReservedTab(initialUrl) {
+  // If tab already exists, return it. Otherwise create a new one.
+  const tabId = await getReservedTabId();
+  if (tabId) {
+    try {
+      await chrome.tabs.get(tabId);
+      return tabId;
+    } catch { /* tab was closed */ }
+  }
+  // Open a new hidden (background) tab
+  const tab = await chrome.tabs.create({
+    url: initialUrl,
+    active: false,   // don't steal focus
+    pinned: true,    // pin so it's harder to accidentally close
+  });
+  await setReservedTabId(tab.id);
+  return tab.id;
+}
+
+async function navigateReservedTab(tabId, url) {
+  return new Promise((resolve) => {
+    chrome.tabs.update(tabId, { url }, () => {
+      // Wait for tab to finish loading
+      const listener = (updatedId, info) => {
+        if (updatedId === tabId && info.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(listener);
+          resolve();
+        }
+      };
+      chrome.tabs.onUpdated.addListener(listener);
+      // Safety timeout: 60s
+      setTimeout(() => {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }, 60_000);
+    });
+  });
+}
+
+// Notify the reserved tab's content script of the current mode/status
+async function sendOverlayUpdate(tabId, payload) {
+  try {
+    await chrome.tabs.sendMessage(tabId, { action: 'auto_overlay_update', ...payload });
+  } catch { /* content script not ready yet */ }
+}
+
+// ─── Scrape cycle ─────────────────────────────────────────────────────────────
+
+async function runScrapeCycle(forceRun = false) {
+  if (_scraping) {
+    console.log('[JOBVIS BG] Scrape already in progress, skipping.');
+    return;
+  }
+
+  const settings = await fetchSettings();
+  const liCfg    = settings?.scheduler?.linkedin;
+  if (!forceRun && !liCfg?.enabled) {
+    console.log('[JOBVIS BG] Auto-scrape not enabled, skipping cycle.');
+    return;
+  }
+
+  const allUrls = await fetchLinkedInUrls();
+  const urls    = shuffle(allUrls.filter(u => u.enabled !== false));
+
+  if (!urls.length) {
+    console.log('[JOBVIS BG] No enabled LinkedIn search URLs configured.');
+    return;
+  }
+
+  _scraping   = true;
+  _lastError  = null;
+  await postHeartbeat({ status: 'scraping' });
+
+  console.log(`[JOBVIS BG] Starting scrape cycle — ${urls.length} URL(s) in random order`);
+
+  for (let i = 0; i < urls.length; i++) {
+    const { name, url } = urls[i];
+    _currentUrlName = name;
+    console.log(`[JOBVIS BG] [${i + 1}/${urls.length}] Loading: "${name}"`);
+
+    try {
+      // Get/create the reserved tab
+      const tabId = await ensureReservedTab(url);
+
+      // Navigate to this URL
+      await navigateReservedTab(tabId, url);
+
+      // Give the page a moment to fully render before content script starts
+      await sleep(2000);
+
+      // Tell content script to start scraping in auto mode
+      let jobs = [];
+      try {
+        await new Promise((resolve, reject) => {
+          chrome.tabs.sendMessage(
+            tabId,
+            {
+              action: 'start',
+              mode: 'auto',
+              config: { maxPages: 5, delay: 800, batchSize: 5 },
+            },
+            (reply) => {
+              if (chrome.runtime.lastError) return reject(chrome.runtime.lastError);
+              if (!reply?.ok) return reject(new Error(reply?.reason || 'start rejected'));
+              resolve();
+            }
+          );
+        });
+
+        // Poll chrome.storage.local until scraping completes (max 10 min)
+        const deadline = Date.now() + 10 * 60_000;
+        while (Date.now() < deadline) {
+          await sleep(3000);
+          const stored = await chrome.storage.local.get([STORAGE_STATE_KEY, STORAGE_JOBS_KEY]);
+          const state  = stored[STORAGE_STATE_KEY];
+          if (!state?.isRunning) {
+            jobs = stored[STORAGE_JOBS_KEY] || [];
+            break;
+          }
+        }
+      } catch (err) {
+        console.warn(`[JOBVIS BG] Content script error for "${name}":`, err.message);
+        _lastError = `Scrape failed for "${name}": ${err.message}`;
+        await sendOverlayUpdate(tabId, {
+          mode: 'auto_error',
+          error: _lastError,
+        });
+        await postHeartbeat();
+        continue;
+      }
+
+      // POST collected jobs to /api/deepscan
+      if (jobs.length > 0) {
+        try {
+          const resp = await fetch(`${API_BASE}/api/deepscan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jobs }),
+          });
+          const result = await resp.json();
+          console.log(`[JOBVIS BG] "${name}" → ${jobs.length} jobs submitted`, result);
+        } catch (err) {
+          console.warn(`[JOBVIS BG] Failed to POST jobs for "${name}":`, err.message);
+        }
+      } else {
+        console.log(`[JOBVIS BG] "${name}" → 0 jobs collected (login required?)`);
+        _lastError = `"${name}": 0 jobs collected — LinkedIn session may have expired`;
+        await sendOverlayUpdate(tabId, {
+          mode: 'auto_error',
+          error: _lastError,
+        });
+      }
+
+      // Update overlay to idle/waiting between URLs
+      if (i < urls.length - 1) {
+        await sendOverlayUpdate(tabId, { mode: 'auto_waiting', next: urls[i + 1].name });
+
+        // Random delay between URLs: 8–25 seconds (anti-fingerprinting)
+        const delay = randomBetween(8_000, 25_000);
+        console.log(`[JOBVIS BG] Waiting ${Math.round(delay / 1000)}s before next URL…`);
+        await sleep(delay);
+      }
+
+    } catch (err) {
+      console.error(`[JOBVIS BG] Unexpected error for "${name}":`, err);
+      _lastError = err.message;
+    }
+  }
+
+  // Cycle complete
+  _scraping     = false;
+  _lastScraped  = new Date().toISOString();
+  _currentUrlName = null;
+
+  // Update overlay in reserved tab to idle/countdown state
+  const tabId = await getReservedTabId();
+  if (tabId) {
+    await sendOverlayUpdate(tabId, {
+      mode: 'auto_idle',
+      last_scraped: _lastScraped,
+      next_scrape_at: _nextScrapeAt,
+    });
+  }
+
+  await postHeartbeat();
+  console.log('[JOBVIS BG] Scrape cycle complete.');
+}
+
+// ─── Alarm: configure from settings ──────────────────────────────────────────
+
+async function reconfigureAlarm() {
+  const settings = await fetchSettings();
+  const liCfg    = settings?.scheduler?.linkedin;
+
+  if (liCfg?.enabled && liCfg?.interval_minutes > 0) {
+    const mins = liCfg.interval_minutes;
+    await chrome.alarms.create(ALARM_NAME, {
+      delayInMinutes: mins,
+      periodInMinutes: mins,
+    });
+    _nextScrapeAt = new Date(Date.now() + mins * 60_000).toISOString();
+    console.log(`[JOBVIS BG] Alarm set: every ${mins} min. Next: ${_nextScrapeAt}`);
+
+    // Ensure reserved tab exists and show idle standby overlay
+    const urls = await fetchLinkedInUrls();
+    const firstEnabled = urls.find(u => u.enabled !== false);
+    if (firstEnabled) {
+      const tabId = await ensureReservedTab(firstEnabled.url);
+      // Give the tab a moment to load before sending overlay
+      setTimeout(async () => {
+        await sendOverlayUpdate(tabId, {
+          mode: 'auto_idle',
+          next_scrape_at: _nextScrapeAt,
+          last_scraped: _lastScraped,
+        });
+      }, 3000);
+    }
+  } else {
+    await chrome.alarms.clear(ALARM_NAME);
+    _nextScrapeAt = null;
+    console.log('[JOBVIS BG] Auto-scrape disabled. Alarm cleared.');
+  }
+
+  // Heartbeat alarm: every 30s to keep server in sync
+  await chrome.alarms.create(ALARM_HEARTBEAT, { periodInMinutes: 0.5 });
+}
+
+// ─── Event listeners ──────────────────────────────────────────────────────────
+
+chrome.runtime.onInstalled.addListener(async () => {
+  console.log('[JOBVIS] Extension installed / updated');
+  connectServerWs();
+  await reconfigureAlarm();
+  await postHeartbeat();
 });
 
-// ─── Message handler ─────────────────────────────────────────
-// Receives messages from the content script and responds with privileged data.
+chrome.runtime.onStartup.addListener(async () => {
+  console.log('[JOBVIS] Browser started — reconfiguring alarms');
+  connectServerWs();
+  await reconfigureAlarm();
+  await postHeartbeat();
+});
+
+// Connect WS immediately when service worker loads (e.g. after extension reload)
+connectServerWs();
+postHeartbeat();
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === ALARM_NAME) {
+    // Update next scrape timestamp
+    const settings = await fetchSettings();
+    const mins = settings?.scheduler?.linkedin?.interval_minutes || 30;
+    _nextScrapeAt = new Date(Date.now() + mins * 60_000).toISOString();
+    await runScrapeCycle();
+
+  } else if (alarm.name === ALARM_HEARTBEAT) {
+    await postHeartbeat();
+  }
+});
+
+// Detect if user closes the reserved tab
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const reservedId = await getReservedTabId();
+  if (tabId === reservedId) {
+    console.warn('[JOBVIS BG] Reserved tab was closed by user!');
+    await clearReservedTabId();
+    _lastError = 'Reserved LinkedIn tab was closed. Auto-scrape paused.';
+    await postHeartbeat({ status: 'error', tab_open: false });
+  }
+});
+
+// ─── Message handler ──────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
-  // getCookie: read an HttpOnly cookie by name for a given URL.
-  // Content scripts cannot access HttpOnly cookies via document.cookie,
-  // but the service worker can via chrome.cookies.get().
   if (msg.action === 'getCookie') {
+    // Privileged HttpOnly cookie read for content scripts
     const { url, name } = msg;
     chrome.cookies.get({ url, name }, (cookie) => {
       reply({ ok: true, value: cookie?.value ?? null });
     });
-    return true; // Keep message channel open for async reply
+    return true;
+  }
+
+  if (msg.action === 'settings_changed') {
+    // Popup or Settings page notified us config changed — reconfigure alarm
+    reconfigureAlarm().then(() => postHeartbeat());
+    reply({ ok: true });
+    return true;
+  }
+
+  if (msg.action === 'trigger_now') {
+    runScrapeCycle(true);   // forceRun: bypass enabled check
+    reply({ ok: true });
+    return true;
+  }
+
+  if (msg.action === 'get_status') {
+    reply({
+      ok: true,
+      scraping: _scraping,
+      nextScrapeAt: _nextScrapeAt,
+      lastScraped: _lastScraped,
+      lastError: _lastError,
+      currentUrlName: _currentUrlName,
+    });
+    return true;
   }
 });

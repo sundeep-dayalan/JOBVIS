@@ -844,11 +844,213 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     if (stopBtn) stopBtn.disabled = true;
     reply({ ok: true });
 
+  } else if (msg.action === 'auto_overlay_update') {
+    // Background.js is updating the reserved-tab overlay in auto-scrape mode
+    _handleAutoOverlay(msg);
+    reply({ ok: true });
+
   } else if (msg.action === 'ping') {
     reply({ ok: true, isRunning: scrapeState.isRunning });
   }
 
   return true; // Keep channel open for async replies
 });
+
+// ─── Auto-scrape reserved tab overlay ────────────────────────────────────────
+// When this tab is reserved by the background scheduler, we show a permanent
+// full-screen overlay that blocks user interaction and shows scraping status.
+
+const AUTO_OVERLAY_ID    = 'jobvis-auto-overlay';
+const AUTO_OVERLAY_STYLE = 'jobvis-auto-overlay-style';
+
+function _ensureAutoOverlay() {
+  if (document.getElementById(AUTO_OVERLAY_ID)) return;
+
+  const style = document.createElement('style');
+  style.id = AUTO_OVERLAY_STYLE;
+  style.textContent = `
+    #${AUTO_OVERLAY_ID} {
+      position: fixed;
+      inset: 0;
+      z-index: 2147483647;
+      background: rgba(5, 5, 18, 0.94);
+      backdrop-filter: blur(6px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: all;
+      user-select: none;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    #jobvis-ao-box {
+      background: #0e0e22;
+      border: 1px solid #1e2a4a;
+      border-radius: 16px;
+      padding: 40px 50px;
+      min-width: 400px;
+      max-width: 520px;
+      text-align: center;
+      box-shadow: 0 32px 80px rgba(0,0,0,0.7);
+    }
+    #jobvis-ao-logo {
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: 5px;
+      color: #0a66c2;
+      margin-bottom: 6px;
+    }
+    #jobvis-ao-subtitle {
+      font-size: 10px;
+      letter-spacing: 2px;
+      color: rgba(255,255,255,0.35);
+      text-transform: uppercase;
+      margin-bottom: 28px;
+    }
+    #jobvis-ao-status-badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      padding: 4px 14px;
+      border-radius: 20px;
+      margin-bottom: 18px;
+      text-transform: uppercase;
+      background: #1a1a38;
+      color: #6666aa;
+      transition: background 0.3s, color 0.3s;
+    }
+    #jobvis-ao-status-badge.scraping {
+      background: rgba(10,102,194,0.2);
+      color: #4fa3e8;
+      animation: aoBadgePulse 1.5s ease-in-out infinite alternate;
+    }
+    #jobvis-ao-status-badge.error {
+      background: rgba(181,45,45,0.2);
+      color: #ef5350;
+    }
+    #jobvis-ao-status-badge.waiting {
+      background: rgba(0,137,123,0.2);
+      color: #4db6ac;
+    }
+    @keyframes aoBadgePulse {
+      from { box-shadow: 0 0 0 rgba(10,102,194,0); }
+      to   { box-shadow: 0 0 12px rgba(10,102,194,0.5); }
+    }
+    #jobvis-ao-main-text {
+      font-size: 16px;
+      font-weight: 600;
+      color: #d0d0f0;
+      margin-bottom: 10px;
+      min-height: 24px;
+    }
+    #jobvis-ao-sub-text {
+      font-size: 12px;
+      color: #55558a;
+      min-height: 18px;
+      margin-bottom: 24px;
+    }
+    #jobvis-ao-bar-wrap {
+      height: 3px;
+      background: #1a1a38;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+    #jobvis-ao-bar-fill {
+      height: 100%;
+      width: 30%;
+      background: linear-gradient(90deg, #0a66c2, #29b6f6);
+      border-radius: 2px;
+      animation: aoBarSlide 2s ease-in-out infinite alternate;
+    }
+    #jobvis-ao-bar-fill.static { animation: none; width: 0%; }
+    @keyframes aoBarSlide {
+      from { margin-left: 0%; }
+      to   { margin-left: 70%; }
+    }
+    #jobvis-ao-warning {
+      font-size: 10px;
+      color: rgba(255,255,255,0.2);
+      letter-spacing: 0.5px;
+      border-top: 1px solid #1a1a38;
+      padding-top: 16px;
+    }
+  `;
+  document.head.appendChild(style);
+
+  const overlay = document.createElement('div');
+  overlay.id = AUTO_OVERLAY_ID;
+  overlay.innerHTML = `
+    <div id="jobvis-ao-box">
+      <div id="jobvis-ao-logo">JOBVIS</div>
+      <div id="jobvis-ao-subtitle">Automated Scraper · Reserved Tab</div>
+      <div id="jobvis-ao-status-badge" class="scraping">⟳ Scraping</div>
+      <div id="jobvis-ao-main-text">Initializing…</div>
+      <div id="jobvis-ao-sub-text"></div>
+      <div id="jobvis-ao-bar-wrap"><div id="jobvis-ao-bar-fill"></div></div>
+      <div id="jobvis-ao-warning">
+        This tab is reserved by JOBVIS Auto-Scraper.<br>
+        Do not close or navigate away — scraping in progress.
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+function _updateAutoOverlayText(badge, badgeClass, mainText, subText, animate = true) {
+  const badgeEl = document.getElementById('jobvis-ao-status-badge');
+  const mainEl  = document.getElementById('jobvis-ao-main-text');
+  const subEl   = document.getElementById('jobvis-ao-sub-text');
+  const barEl   = document.getElementById('jobvis-ao-bar-fill');
+  if (!badgeEl) return;
+  badgeEl.textContent = badge;
+  badgeEl.className   = badgeClass;
+  mainEl.textContent  = mainText;
+  subEl.textContent   = subText || '';
+  if (barEl) barEl.className = animate ? 'jobvis-ao-bar-fill' : 'jobvis-ao-bar-fill static';
+}
+
+function _handleAutoOverlay(msg) {
+  _ensureAutoOverlay();
+  const mode = msg.mode;
+
+  if (mode === 'auto_idle') {
+    const next = msg.next_scrape_at ? new Date(msg.next_scrape_at).toLocaleTimeString() : 'scheduled';
+    _updateAutoOverlayText(
+      '◉ Idle',
+      'jobvis-ao-status-badge',
+      'Waiting for next scrape cycle',
+      `Next run: ${next}`,
+      false
+    );
+  } else if (mode === 'auto_scraping') {
+    _updateAutoOverlayText(
+      '⟳ Scraping',
+      'jobvis-ao-status-badge scraping',
+      `Collecting jobs from: ${msg.url_name || 'LinkedIn'}`,
+      `Phase ${msg.phase || 1} — ${msg.count || 0} jobs found`,
+      true
+    );
+  } else if (mode === 'auto_waiting') {
+    _updateAutoOverlayText(
+      '◌ Waiting',
+      'jobvis-ao-status-badge waiting',
+      'Scrape complete. Pausing before next URL…',
+      `Next: ${msg.next || ''}`,
+      false
+    );
+  } else if (mode === 'auto_error') {
+    _updateAutoOverlayText(
+      '✕ Error',
+      'jobvis-ao-status-badge error',
+      'Scrape failed — check your LinkedIn session',
+      msg.error || 'Unknown error',
+      false
+    );
+    // Tint the overlay box red to make error very visible
+    const box = document.getElementById('jobvis-ao-box');
+    if (box) box.style.borderColor = 'rgba(181,45,45,0.5)';
+  }
+}
 
 console.log('[JOBVIS] Content script ready (v2 — two-phase Voyager API)');

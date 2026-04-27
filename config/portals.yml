@@ -1,3 +1,18 @@
+# ── LinkedIn Auto-Scrape Search URLs ────────────────────────────────────────────
+# These URLs are loaded by the JOBVIS Chrome extension when auto-scrape is enabled.
+# The extension cycles through all enabled URLs each interval (in random order).
+# URL format: standard LinkedIn Jobs search page with any filters applied.
+linkedin_search_urls:
+  - name: "Last 24hrs in Washington (Software Engineer)"
+    url: "https://www.linkedin.com/jobs/search/?currentJobId=4405932915&f_E=2%2C3%2C4&f_TPR=r86400&geoId=103977389&keywords=software%20engineer&origin=JOB_SEARCH_PAGE_JOB_FILTER&refresh=true"
+    enabled: true
+  - name: "Last 24hrs in Washington (AI)"
+    url: "https://www.linkedin.com/jobs/search/?currentJobId=4405936275&f_E=2%2C3%2C4&f_TPR=r86400&geoId=103977389&keywords=ai&origin=JOB_SEARCH_PAGE_SEARCH_BUTTON&refresh=true"
+    enabled: true
+  - name: "Last 24hrs in Washington (Advanced)"
+    url: "https://www.linkedin.com/jobs/search/?currentJobId=4405938288&f_E=2%2C3%2C4&f_TPR=r86400&geoId=103977389&keywords=(Engineer%20OR%20Developer%20OR%20Architect)%20AND%20(Python%20OR%20Java)%20AND%20(Kafka%20OR%20%22Distributed%20Systems%22%20OR%20LLM%20OR%20LangChain%20OR%20RAG%20OR%20Spark%20OR%20Redis%20OR%20CIAM%20OR%20Blob%20OR%20s3%20or%20sqs%20or%20sns%20or%20reporting)&origin=JOB_SEARCH_PAGE_JOB_FILTER&refresh=true"
+    enabled: true
+
 tracked_companies:
 
   # ── LinkedIn ────────────────────────────────────────────────────────────────

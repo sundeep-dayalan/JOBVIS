@@ -3,11 +3,12 @@
   "name": "JOBVIS - (DEV)",
   "version": "3.0.0",
   "description": "Scrape job listings from LinkedIn and Ashby job boards and export as standardized JSON",
-  "permissions": ["activeTab", "scripting", "storage", "tabs", "downloads", "cookies"],
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "downloads", "cookies", "alarms"],
   "host_permissions": [
     "https://www.linkedin.com/*",
     "https://jobs.ashbyhq.com/*",
-    "https://api.ashbyhq.com/*"
+    "https://api.ashbyhq.com/*",
+    "http://localhost:8000/*"
   ],
   "action": {
     "default_popup": "popup.html"
