@@ -32,7 +32,14 @@ function DeepScan() {
 
     try {
       const parsedData = JSON.parse(jsonData)
-      
+
+      // Normalize: accept raw array or {jobs:[...]} wrapper — always send raw array
+      const jobsArray = Array.isArray(parsedData)
+        ? parsedData
+        : Array.isArray(parsedData?.jobs)
+          ? parsedData.jobs
+          : [parsedData]  // single object — wrap in array
+
       setLoading(true)
       setStatus(null)
       setLogs(["[SYSTEM] Opening telemetry socket to backend..."])
@@ -50,7 +57,7 @@ function DeepScan() {
                 headers: {
                   'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ jobs: parsedData })
+                body: JSON.stringify(jobsArray)
               })
         
               if (!response.ok) {

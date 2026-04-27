@@ -18,15 +18,15 @@ llm-providers:
   #   concurrency: 1
 
 # ── Ollama (local) ──────────────────────────────────────────────────────────
-  - provider: ollama
-    name: ollama-qwen2.5-7b-instruct-q4_K_M-local
-    model: qwen2.5:7b-instruct-q4_K_M
-    mode: local
-    url: http://localhost:11434
-    keep_alive: "15m"
-    num_ctx: 8192
-    num_predict: 2048
-    concurrency: 1
+  # - provider: ollama
+  #   name: ollama-qwen2.5-7b-instruct-q4_K_M-local
+  #   model: qwen2.5:7b-instruct-q4_K_M
+  #   mode: local
+  #   url: http://localhost:11434
+  #   keep_alive: "15m"
+  #   num_ctx: 8192
+  #   num_predict: 2048
+  #   concurrency: 1
 
   # ── Ollama (local) ──────────────────────────────────────────────────────────
   # - provider: ollama
@@ -58,11 +58,11 @@ llm-providers:
   #   concurrency: 2   # MLX handles this natively, no server-side config needed
 
   # ── Gemini (cloud) — requires GEMINI_API_KEY in .env ────────────────────────
-  # - provider: gemini
-  #   name: gemini-free-tier-flash-lite
-  #   model: gemini-3.1-flash-lite-preview
-  #   mode: cloud
-  #   concurrency: 3
+  - provider: gemini
+    name: gemini-paid-tier-flash-lite
+    model: gemini-3.1-flash-lite-preview
+    mode: cloud
+    concurrency: 3
 
   # ── Groq (cloud) — requires GROQ_API_KEY in .env ────────────────────────────
   # - provider: groq

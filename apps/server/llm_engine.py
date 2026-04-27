@@ -6,6 +6,10 @@ import json
 from dotenv import load_dotenv
 from tenacity import AsyncRetrying, wait_exponential, stop_after_attempt
 
+# google-genai SDK — used for Gemini cloud provider
+from google import genai as _google_genai
+from google.genai import types as _genai_types
+
 load_dotenv(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../.env')))
 
 class LLMEngine:
@@ -64,16 +68,14 @@ class LLMEngine:
             if not self.api_key:
                 print("[!] CRITICAL: GEMINI_API_KEY is missing from .env")
                 return False
-            url = f"https://generativelanguage.googleapis.com/v1beta/models?key={self.api_key}"
             try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    resp = await client.get(url)
-                    if resp.status_code == 200:
-                        return True
-                    print(f"Gemini API Health Check Failed: {resp.status_code} {resp.text}")
-                    return False
+                def _check():
+                    c = _google_genai.Client(api_key=self.api_key)
+                    next(iter(c.models.list()))  # sync Pager — just fetch first result
+                    return True
+                return await asyncio.to_thread(_check)
             except Exception as e:
-                print(f"Gemini Network Error: {e}")
+                print(f"[!] Gemini health check failed: {e}")
                 return False
 
         if self.provider == "groq":
@@ -169,71 +171,88 @@ class LLMEngine:
             raise NotImplementedError(f"Provider '{self.provider}' is not supported. Use: gemini, ollama, groq, mlx.")
             
     async def _evaluate_gemini(self, system_prompt: str, user_prompt: str, max_retries: int, client: httpx.AsyncClient = None) -> dict:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
-        
-        should_close = False
-        if client is None:
-            client = httpx.AsyncClient(timeout=120.0)
-            should_close = True
-        
-        # Gemini separates system instructions from pure chat messages
-        gemini_history = [
-            {"role": "user", "parts": [{"text": user_prompt}]}
+        """
+        Evaluates a job match using the google-genai SDK.
+        Uses streaming + ThinkingConfig(MINIMAL) for faster, more reliable responses.
+        The SDK handles auth, retries, and connection management natively.
+        `client` param is kept for interface compatibility but not used (SDK manages its own transport).
+        """
+        genai_client = _google_genai.Client(api_key=self.api_key)
+
+        # Conversation history — grows on JSON parse failure so the model can self-correct
+        contents = [
+            _genai_types.Content(
+                role="user",
+                parts=[_genai_types.Part.from_text(text=user_prompt)],
+            )
         ]
-        
-        try:
-            for attempt in range(max_retries):
-                payload = {
-                    "systemInstruction": {"parts": [{"text": system_prompt}]},
-                    "contents": gemini_history,
-                    "generationConfig": {"responseMimeType": "application/json"}
-                }
-                try:
-                    # Exponential backoff isolated exclusively to network layer (429s, 500s, etc)
-                    async for network_attempt in AsyncRetrying(
-                        wait=wait_exponential(multiplier=1.5, min=2, max=20),
-                        stop=stop_after_attempt(5),
-                        reraise=True
+
+        generate_config = _genai_types.GenerateContentConfig(
+            thinking_config=_genai_types.ThinkingConfig(thinking_level="MINIMAL"),
+            system_instruction=[
+                _genai_types.Part.from_text(text=system_prompt)
+            ],
+            # Don't set responseMimeType="application/json" here —
+            # thinking models don't support constrained MIME output.
+            # We parse JSON from the streamed text instead.
+        )
+
+        for attempt in range(max_retries):
+            try:
+                # Stream the response — collect chunks into a full string
+                ai_reply_parts: list[str] = []
+
+                # SDK streaming is sync; run in thread to avoid blocking the event loop
+                def _stream_sync():
+                    for chunk in genai_client.models.generate_content_stream(
+                        model=self.model,
+                        contents=contents,
+                        config=generate_config,
                     ):
-                        with network_attempt:
-                            response = await client.post(url, json=payload)
-                            response.raise_for_status()
-                            
-                    data = response.json()
-                    
-                    if "candidates" not in data or not data["candidates"]:
-                        raise ValueError(f"No candidates returned: {data}")
-                        
-                    ai_reply = data["candidates"][0]["content"]["parts"][0]["text"]
-                    
-                    gemini_history.append({"role": "model", "parts": [{"text": ai_reply}]})
-                    
-                    try:
-                        # Clean potential markdown wrapping even when responseMimeType is set
-                        cleaned_reply = ai_reply.strip()
-                        if cleaned_reply.startswith("```json"):
-                            cleaned_reply = cleaned_reply[7:]
-                        elif cleaned_reply.startswith("```"):
-                            cleaned_reply = cleaned_reply[3:]
-                        if cleaned_reply.endswith("```"):
-                            cleaned_reply = cleaned_reply[:-3]
-                            
-                        parsed_json = json.loads(cleaned_reply.strip())
-                        return parsed_json
-                    except json.JSONDecodeError:
-                        print(f"  [Attempt {attempt+1}] Invalid JSON returned from Gemini. Raw Output: {cleaned_reply[:200]}...")
-                        gemini_history.append({
-                            "role": "user", 
-                            "parts": [{"text": "You did not return valid JSON. Please return STRICTLY valid JSON according to the schema. No markdown wrapping."}]
-                        })
-                except Exception as e:
-                    print(f"  [Attempt {attempt+1}] Gemini API Evaluation Error: {e}")
-                    await asyncio.sleep(2)
-            
-            return None
-        finally:
-            if should_close:
-                await client.aclose()
+                        if chunk.text:
+                            ai_reply_parts.append(chunk.text)
+
+                await asyncio.to_thread(_stream_sync)
+
+                ai_reply = "".join(ai_reply_parts).strip()
+
+                # Append model turn to history for self-correction on next attempt
+                contents.append(
+                    _genai_types.Content(
+                        role="model",
+                        parts=[_genai_types.Part.from_text(text=ai_reply)],
+                    )
+                )
+
+                # Strip markdown fences if present
+                cleaned = ai_reply
+                if cleaned.startswith("```json"):
+                    cleaned = cleaned[7:]
+                elif cleaned.startswith("```"):
+                    cleaned = cleaned[3:]
+                if cleaned.endswith("```"):
+                    cleaned = cleaned[:-3]
+                cleaned = cleaned.strip()
+
+                try:
+                    return json.loads(cleaned)
+                except json.JSONDecodeError:
+                    print(f"  [Gemini attempt {attempt+1}] Invalid JSON. Raw: {cleaned[:200]}...")
+                    # Ask model to self-correct on next attempt
+                    contents.append(
+                        _genai_types.Content(
+                            role="user",
+                            parts=[_genai_types.Part.from_text(
+                                text="You did not return valid JSON. Please return STRICTLY valid JSON according to the schema. No markdown wrapping. The very first character must be `{`."
+                            )],
+                        )
+                    )
+
+            except Exception as e:
+                print(f"  [Gemini attempt {attempt+1}] SDK Error: {e}")
+                await asyncio.sleep(2 ** attempt)  # exponential backoff: 1s, 2s, 4s
+
+        return None
 
     async def _evaluate_ollama(self, system_prompt: str, user_prompt: str, max_retries: int, client: httpx.AsyncClient = None) -> dict:
         messages = [

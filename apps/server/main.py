@@ -226,7 +226,21 @@ app.add_middleware(
 @app.post("/api/deepscan")
 async def receive_deepscan(request: Request, db: Session = Depends(database.get_db)):
     data = await request.json()
-    raw_jobs = data.get("jobs", []) if isinstance(data, dict) else []
+    logger.debug("[DeepScan] Received payload type={} preview={}", type(data).__name__, str(data)[:200])
+    # Accept multiple payload shapes:
+    #   [job, ...]                        — raw array
+    #   {"jobs": [job, ...]}              — extension/programmatic format
+    #   {"linkedinScrapeData": [job, ...]}— LinkedIn export file format
+    if isinstance(data, list):
+        raw_jobs = data
+    elif isinstance(data, dict):
+        raw_jobs = (
+            data.get("jobs")
+            or data.get("linkedinScrapeData")
+            or []
+        )
+    else:
+        raw_jobs = []
 
     if not raw_jobs:
         logger.warning("[DeepScan] /api/deepscan received empty payload — no jobs to process")
