@@ -147,14 +147,18 @@ function Home() {
     }
   }, [datePreset]);
 
-  // Update selected job automatically if filter or items totally change
+  // Auto-select the first job ONLY when there is no valid current selection.
+  // Never overwrite an existing selection just because jobs re-fetched.
   useEffect(() => {
-    const activeJobs = jobs.filter(job => job.status === statusFilter);
-    if (activeJobs.length > 0) {
-      setSelectedJobId(activeJobs[0].id);
-    } else {
-      setSelectedJobId(null);
-    }
+    const visibleJobs = statusFilter === 'ALL'
+      ? jobs
+      : jobs.filter(job => job.status === statusFilter);
+
+    const currentStillVisible = visibleJobs.some(j => j.id === selectedJobId);
+    if (currentStillVisible) return; // keep the current selection intact
+
+    // No selection or selected job gone — pick the first visible job
+    setSelectedJobId(visibleJobs.length > 0 ? visibleJobs[0].id : null);
   }, [statusFilter, jobs]);
 
   useEffect(() => {

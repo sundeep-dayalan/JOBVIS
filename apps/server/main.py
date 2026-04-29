@@ -1395,7 +1395,8 @@ def bulk_delete_jobs(payload: BulkDeleteRequest, db: Session = Depends(database.
 def get_jobs(db: Session = Depends(database.get_db)):
     jobs = db.query(models.JobPosition).order_by(
         models.JobPosition.updated_at.desc(),
-        models.JobPosition.created_at.desc(),  # stable tiebreaker when updated_at ties
+        models.JobPosition.created_at.desc(),  # tiebreaker for same updated_at (batch migrations)
+        models.JobPosition.id.asc(),           # guaranteed-unique final tiebreaker (UUID never ties)
     ).all()
     return [
         {
