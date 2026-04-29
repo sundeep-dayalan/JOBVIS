@@ -614,12 +614,26 @@ function Home() {
                 </div>
 
                 {/* Job Metadata Bar */}
-                {(selectedJob.job_posted_at || selectedJob.job_updated_at) && (
-                  <div style={{ borderTop: '1px solid var(--border-color)', borderBottom: '1px solid var(--border-color)', padding: '0.8rem 0', marginBottom: '2rem', display: 'flex', gap: '2rem', color: 'var(--text-dim)', fontSize: '0.9rem' }}>
-                    {selectedJob.job_posted_at && <div><span style={{ color: '#888' }}>POSTED:</span> {selectedJob.job_posted_at}</div>}
-                    {selectedJob.job_updated_at && <div><span style={{ color: '#888' }}>UPDATED:</span> {selectedJob.job_updated_at}</div>}
-                  </div>
-                )}
+                <div style={{ borderTop: '1px solid var(--border-color)', borderBottom: '1px solid var(--border-color)', padding: '0.8rem 0', marginBottom: '2rem', display: 'flex', gap: '2rem', flexWrap: 'wrap', color: 'var(--text-dim)', fontSize: '0.85rem' }}>
+                  {selectedJob.job_posted_at && <div><span style={{ color: '#888' }}>POSTED:</span> {selectedJob.job_posted_at}</div>}
+                  {selectedJob.job_updated_at && <div><span style={{ color: '#888' }}>JOB UPDATED:</span> {selectedJob.job_updated_at}</div>}
+                  {selectedJob.updated_at && (
+                    <div>
+                      <span style={{ color: '#888' }}>LAST UPDATED: </span>
+                      <span title={new Date(selectedJob.updated_at).toLocaleString()}>
+                        {(() => {
+                          const d = new Date(selectedJob.updated_at);
+                          const diff = Math.floor((Date.now() - d.getTime()) / 1000);
+                          if (diff < 60)  return 'just now';
+                          if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+                          if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+                          if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+                          return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                        })()}
+                      </span>
+                    </div>
+                  )}
+                </div>
 
                 {/* AI Core Evaluation */}
                 {selectedJob.ai_analysis ? (
