@@ -1066,10 +1066,10 @@ async def execute_job_pipeline(jobs: List[dict], db: Session, force_rescan: bool
                 job["ai_analysis"] = ai_result
 
                 logger.info("[AI] Result for {}: score={} ({})", title, score, ai_elapsed_fmt)
-                if score < 2.5:
-                    await manager.broadcast({"type": "job_update", "message": f"  -> REJECTED: {title} | Score: {score} | {ai_elapsed_fmt}"})
-                    return (job, "IGNORED", f"AI Score {score} < 2.5", ai_elapsed)
-                await manager.broadcast({"type": "job_update", "message": f"  -> PASSED: {title} | Score: {score} | {ai_elapsed_fmt}"})
+                if score < 75:
+                    await manager.broadcast({"type": "job_update", "message": f"  -> REJECTED: {title} | Score: {score}/100 | {ai_elapsed_fmt}"})
+                    return (job, "IGNORED", f"AI Score {score}/100 < 75", ai_elapsed)
+                await manager.broadcast({"type": "job_update", "message": f"  -> PASSED: {title} | Score: {score}/100 | {ai_elapsed_fmt}"})
                 return (job, "ACTIVE", None, ai_elapsed)
             else:
                 logger.warning("[AI] Failed to get JSON for {} after retries ({})", title, ai_elapsed_fmt)

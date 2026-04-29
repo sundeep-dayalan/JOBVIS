@@ -563,7 +563,7 @@ function Home() {
                     <div style={{
                       color: job.ai_score >= 75 ? 'var(--text-main)' : job.ai_score >= 50 ? 'var(--accent)' : '#ff5555',
                       fontWeight: 'bold',
-                      fontSize: '1rem',
+                      fontSize: '0.9rem',
                       background: 'var(--panel-bg)',
                       padding: '0.2rem 0.6rem',
                       borderRadius: '4px',
@@ -571,7 +571,7 @@ function Home() {
                       boxShadow: job.ai_score >= 75 ? 'var(--glow)' : 'none',
                       flexShrink: 0
                     }}>
-                      {job.ai_score}
+                      {job.ai_score}/100
                     </div>
                   )}
                 </div>
@@ -645,7 +645,7 @@ function Home() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                       <h3 style={{ margin: 0, color: 'var(--text-main)', letterSpacing: '1px' }}>/// AI ANALYSIS</h3>
                       <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: selectedJob.ai_score >= 75 ? 'var(--text-main)' : selectedJob.ai_score >= 50 ? 'var(--accent)' : '#ff5555', textShadow: selectedJob.ai_score >= 75 ? 'var(--glow)' : 'none' }}>
-                        SCORE: {selectedJob.ai_score}/5
+                        SCORE: {selectedJob.ai_score}/100
                       </div>
                     </div>
 
