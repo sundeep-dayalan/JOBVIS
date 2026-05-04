@@ -1,22 +1,125 @@
-# JOBVIS Monorepo
+<div align="center">
 
-This repository is organized as a monorepo so new projects can be added without mixing concerns.
+# JOBVIS
 
-## Structure
+**AI-Powered Job Intelligence Platform**
 
-- `apps/extension`: Existing Chrome extension code (moved as-is)
-- `apps/ui`: Future UI application
-- `scripts`: Automation scripts and helpers
-- `packages`: Shared libraries and reusable modules
+*Scrape → Filter → Match → Track — all in one intelligent pipeline*
 
-## Chrome Extension Development
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://reactjs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://typescriptlang.org)
+[![Chrome Extension](https://img.shields.io/badge/Chrome_Extension-MV3-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/)
 
-Load unpacked extension from:
+</div>
 
-`apps/extension`
+---
 
-No extension source code was modified during this reorganization.
+## Overview
 
-jq 'select(.record.message | contains("Listing failed"))' apps/server/logs/jobvis_2026-04-14.log
+JOBVIS is a monorepo combining a **Chrome extension**, **Python AI server**, and **React dashboard** to automate the job search pipeline. It scrapes job postings from Ashby, Greenhouse, and Lever — then uses an LLM pipeline to filter, score, and match roles against your CV in real time.
 
-apps/server/venv/bin/pip install -r apps/server/requirements.txt --force-reinstall
+No more manually scrolling through hundreds of irrelevant postings.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TD
+    A[Chrome Extension<br/>Ashby Scraper] --> B[Python FastAPI Server]
+    J[Greenhouse Scraper] --> B
+    K[Lever Scraper] --> B
+    B --> C{Filtering Pipeline}
+    C --> D[Title Filter]
+    C --> E[Location Filter]
+    C --> F[JD Relevance Filter]
+    D & E & F --> G[LLM Engine<br/>Job Match Analyst]
+    G --> H[(Database)]
+    H --> I[React Dashboard<br/>Vite + TypeScript]
+
+    style A fill:#4285F4,color:#fff,stroke:none
+    style G fill:#10a37f,color:#fff,stroke:none
+    style I fill:#61DAFB,color:#000,stroke:none
+    style B fill:#009688,color:#fff,stroke:none
+```
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Chrome Extension | JavaScript, Chrome MV3 |
+| Backend | Python, FastAPI |
+| AI Engine | LLM, Prompt Engineering |
+| Scrapers | Ashby, Greenhouse, Lever |
+| Frontend | React 18, TypeScript, Vite |
+| Scheduler | APScheduler |
+
+---
+
+## Monorepo Structure
+
+```
+JOBVIS/
+├── apps/
+│   ├── extension/          # Chrome MV3 extension (Ashby scraper)
+│   │   ├── manifest.json
+│   │   ├── background.js
+│   │   ├── content.js
+│   │   └── popup.*
+│   ├── server/             # Python FastAPI backend
+│   │   ├── main.py
+│   │   ├── llm_engine.py
+│   │   ├── scheduler.py
+│   │   ├── pipeline/       # JD / title / location filters
+│   │   ├── scrapers/       # Ashby, Greenhouse, Lever
+│   │   └── prompts/        # LLM prompt templates
+│   └── ui/                 # React + TypeScript dashboard
+└── README.md
+```
+
+---
+
+## Key Features
+
+- **Multi-source scraping** — Ashby, Greenhouse, and Lever job boards
+- **AI-powered matching** — LLM scores each job against your CV and target criteria
+- **Smart filtering pipeline** — title, location, and JD relevance filters before LLM call
+- **Scheduled ingestion** — APScheduler runs scraping jobs automatically
+- **Chrome Extension** — capture jobs directly from Ashby in your browser
+
+---
+
+## Getting Started
+
+### Server
+
+```bash
+cd apps/server
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+python main.py
+```
+
+### Chrome Extension
+
+1. Open `chrome://extensions`
+2. Enable **Developer mode**
+3. Click **Load unpacked** → select `apps/extension`
+
+### Dashboard UI
+
+```bash
+cd apps/ui
+npm install
+npm run dev
+```
+
+---
+
+## Author
+
+**Sundeep Dayalan** · [Portfolio](https://sundeepdayalan.in) · [LinkedIn](https://linkedin.com/in/sundeep-dayalan)
