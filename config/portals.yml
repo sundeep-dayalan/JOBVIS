@@ -27,6 +27,14 @@ tracked_companies:
     source: ashby
     slug: pinecone
     enabled: true
+  - name: aurelian
+    source: ashby
+    slug: aurelian
+    enabled: true
+  - name: snowflake
+    source: ashby
+    slug: snowflake
+    enabled: true
   - name: Lambda
     source: ashby
     slug: lambda
@@ -198,6 +206,10 @@ tracked_companies:
   - name: whatnot
     source: ashby
     slug: whatnot
+    enabled: true
+  - name: render
+    source: ashby
+    slug: render
     enabled: true
   - name: oumi
     source: ashby
@@ -523,6 +535,10 @@ tracked_companies:
     source: ashby
     slug: scribdinc
     enabled: true
+  - name: sprinter-health
+    source: ashby
+    slug: sprinter-health
+    enabled: true
   - name: spacex
     source: greenhouse
     slug: spacex
@@ -551,9 +567,29 @@ tracked_companies:
     source: greenhouse
     slug: databricks
     enabled: true
+  - name: temporaltechnologies
+    source: greenhouse
+    slug: temporaltechnologies
+    enabled: true
+  - name: offerup
+    source: greenhouse
+    slug: offerup
+    enabled: true
+  - name: thealleninstitute
+    source: greenhouse
+    slug: thealleninstitute
+    enabled: true
+  - name: zenoti
+    source: greenhouse
+    slug: zenoti
+    enabled: true
   - name: purestorage
     source: greenhouse
     slug: purestorage
+    enabled: true
+  - name: chainguard
+    source: greenhouse
+    slug: chainguard
     enabled: true
   - name: dexisconsultinggroup
     source: greenhouse
@@ -566,6 +602,14 @@ tracked_companies:
   - name: opendoor
     source: greenhouse
     slug: opendoor
+    enabled: true
+  - name: axon
+    source: greenhouse
+    slug: axon
+    enabled: true
+  - name: instacart
+    source: greenhouse
+    slug: instacart
     enabled: true
   - name: americancapitalgroup
     source: greenhouse
@@ -691,6 +735,10 @@ tracked_companies:
     source: greenhouse
     slug: speechify
     enabled: true
+  - name: axs
+    source: greenhouse
+    slug: axs
+    enabled: true
   - name: mediaalpha
     source: greenhouse
     slug: mediaalpha
@@ -751,10 +799,6 @@ tracked_companies:
     source: greenhouse
     slug: possiblefinancialinc
     enabled: true
-  - name: xai
-    source: greenhouse
-    slug: xai
-    enabled: true
   - name: gradial
     source: greenhouse
     slug: gradial
@@ -798,6 +842,14 @@ tracked_companies:
   - name: chaosindustries
     source: greenhouse
     slug: chaosindustries
+    enabled: true
+  - name: postscript
+    source: greenhouse
+    slug: postscript
+    enabled: true
+  - name: huntress
+    source: greenhouse
+    slug: huntress
     enabled: true
   - name: warp
     source: greenhouse
@@ -899,6 +951,10 @@ tracked_companies:
     source: greenhouse
     slug: tanium
     enabled: true
+  - name: truebill
+    source: greenhouse
+    slug: truebill
+    enabled: true
   - name: abnormalsecurity
     source: greenhouse
     slug: abnormalsecurity
@@ -950,6 +1006,10 @@ tracked_companies:
   - name: togetherai
     source: greenhouse
     slug: togetherai
+    enabled: true
+  - name: grafanalabs
+    source: greenhouse
+    slug: grafanalabs
     enabled: true
   - name: cerebrassystems
     source: greenhouse
@@ -1007,6 +1067,10 @@ tracked_companies:
     source: greenhouse
     slug: tenstorrent
     enabled: true
+  - name: block
+    source: greenhouse
+    slug: block
+    enabled: true
 
   # ── Lever ─────────────────────────────────────────────────────────────────────
   # Lever public REST API — no auth required.
@@ -1036,6 +1100,10 @@ tracked_companies:
   - name: velo3d
     source: lever
     slug: velo3d
+    enabled: true
+  - name: smarsh
+    source: lever
+    slug: smarsh
     enabled: true
   - name: cyngn
     source: lever
@@ -1117,6 +1185,10 @@ tracked_companies:
     source: lever
     slug: revealtech
     enabled: true
+  - name: outreach
+    source: lever
+    slug: outreach
+    enabled: true
   - name: evry-health
     source: lever
     slug: evry-health
@@ -1136,6 +1208,10 @@ tracked_companies:
   - name: field-ai
     source: lever
     slug: field-ai
+    enabled: true
+  - name: conversica
+    source: lever
+    slug: conversica
     enabled: true
   - name: extremenetworks
     source: lever
@@ -1188,4 +1264,504 @@ tracked_companies:
   - name: postman
     source: greenhouse
     slug: postman
+    enabled: true
+  - name: xai
+    source: greenhouse
+    slug: xai
+    enabled: true
+  - name: alchemy
+    source: ashby
+    slug: alchemy
+    enabled: true
+  - name: openrouter
+    source: ashby
+    slug: openrouter
+    enabled: true
+  - name: julius
+    source: ashby
+    slug: julius
+    enabled: true
+  - name: valon
+    source: ashby
+    slug: valon
+    enabled: true
+  - name: datacurve
+    source: ashby
+    slug: datacurve
+    enabled: true
+  - name: dexmate
+    source: ashby
+    slug: dexmate
+    enabled: true
+  - name: midstream
+    source: ashby
+    slug: midstream
+    enabled: true
+  - name: replit
+    source: ashby
+    slug: replit
+    enabled: true
+  - name: substack
+    source: ashby
+    slug: substack
+    enabled: true
+  - name: emerald-ai
+    source: ashby
+    slug: emerald-ai
+    enabled: true
+  - name: browserbase
+    source: ashby
+    slug: browserbase
+    enabled: true
+  - name: archil
+    source: ashby
+    slug: archil
+    enabled: true
+  - name: lightfield
+    source: ashby
+    slug: lightfield
+    enabled: true
+  - name: ambiencehealthcare
+    source: ashby
+    slug: ambiencehealthcare
+    enabled: true
+  - name: mercor
+    source: ashby
+    slug: mercor
+    enabled: true
+  - name: sciforium
+    source: ashby
+    slug: sciforium
+    enabled: true
+  - name: picogrid
+    source: ashby
+    slug: picogrid
+    enabled: true
+  - name: axiom
+    source: ashby
+    slug: axiom
+    enabled: true
+  - name: hims-and-hers
+    source: ashby
+    slug: hims-and-hers
+    enabled: true
+  - name: xbowcareers
+    source: ashby
+    slug: xbowcareers
+    enabled: true
+  - name: zip
+    source: ashby
+    slug: zip
+    enabled: true
+  - name: eventualcomputing
+    source: ashby
+    slug: eventualcomputing
+    enabled: true
+  - name: mach
+    source: ashby
+    slug: mach
+    enabled: true
+  - name: owner
+    source: ashby
+    slug: owner
+    enabled: true
+  - name: arago
+    source: ashby
+    slug: arago
+    enabled: true
+  - name: cleric
+    source: ashby
+    slug: cleric
+    enabled: true
+  - name: sim
+    source: ashby
+    slug: sim
+    enabled: true
+  - name: clasp-group
+    source: ashby
+    slug: clasp-group
+    enabled: true
+  - name: arcadeai
+    source: ashby
+    slug: arcadeai
+    enabled: true
+  - name: livekit
+    source: ashby
+    slug: livekit
+    enabled: true
+  - name: e2b
+    source: ashby
+    slug: e2b
+    enabled: true
+  - name: revenuebase-inc
+    source: ashby
+    slug: revenuebase-inc
+    enabled: true
+  - name: flowengineering
+    source: ashby
+    slug: flowengineering
+    enabled: true
+  - name: modal
+    source: ashby
+    slug: modal
+    enabled: true
+  - name: compa
+    source: ashby
+    slug: compa
+    enabled: true
+  - name: uipath
+    source: ashby
+    slug: uipath
+    enabled: true
+  - name: dust
+    source: ashby
+    slug: dust
+    enabled: true
+  - name: exa
+    source: ashby
+    slug: exa
+    enabled: true
+  - name: astronomer
+    source: ashby
+    slug: astronomer
+    enabled: true
+  - name: superdial
+    source: ashby
+    slug: superdial
+    enabled: true
+  - name: vanta
+    source: ashby
+    slug: vanta
+    enabled: true
+  - name: teamworks
+    source: ashby
+    slug: teamworks
+    enabled: true
+  - name: bjakcareer
+    source: ashby
+    slug: bjakcareer
+    enabled: true
+  - name: ontic
+    source: ashby
+    slug: ontic
+    enabled: true
+  - name: Superhuman
+    source: ashby
+    slug: Superhuman%20Platform%20Inc
+    enabled: true
+  - name: docker
+    source: ashby
+    slug: docker
+    enabled: true
+  - name: engine
+    source: greenhouse
+    slug: engine
+    enabled: true
+  - name: remotecom
+    source: greenhouse
+    slug: remotecom
+    enabled: true
+  - name: openly
+    source: greenhouse
+    slug: openly
+    enabled: true
+  - name: perfectserve
+    source: greenhouse
+    slug: perfectserve
+    enabled: true
+  - name: flex
+    source: greenhouse
+    slug: flex
+    enabled: true
+  - name: pinterest
+    source: greenhouse
+    slug: pinterest
+    enabled: true
+  - name: datakindinc
+    source: greenhouse
+    slug: datakindinc
+    enabled: true
+  - name: upbound
+    source: greenhouse
+    slug: upbound
+    enabled: true
+  - name: ezcaterinc
+    source: greenhouse
+    slug: ezcaterinc
+    enabled: true
+  - name: cresta
+    source: greenhouse
+    slug: cresta
+    enabled: true
+  - name: yipitdata
+    source: greenhouse
+    slug: yipitdata
+    enabled: true
+  - name: omadahealth
+    source: greenhouse
+    slug: omadahealth
+    enabled: true
+  - name: transcendinc
+    source: greenhouse
+    slug: transcendinc
+    enabled: true
+  - name: stackav
+    source: greenhouse
+    slug: stackav
+    enabled: true
+  - name: coinbase
+    source: greenhouse
+    slug: coinbase
+    enabled: true
+  - name: coreweave
+    source: greenhouse
+    slug: coreweave
+    enabled: true
+  - name: runpod
+    source: greenhouse
+    slug: runpod
+    enabled: true
+  - name: medallionakafirstlayerai
+    source: greenhouse
+    slug: medallionakafirstlayerai
+    enabled: true
+  - name: gitlab
+    source: greenhouse
+    slug: gitlab
+    enabled: true
+  - name: jobgether
+    source: lever
+    slug: jobgether
+    enabled: true
+  - name: playonsports
+    source: lever
+    slug: playonsports
+    enabled: true
+  - name: waabi
+    source: lever
+    slug: waabi
+    enabled: true
+  - name: revefi
+    source: lever
+    slug: revefi
+    enabled: true
+  - name: instrumentl
+    source: lever
+    slug: instrumentl
+    enabled: true
+  - name: rover
+    source: lever
+    slug: rover
+    enabled: true
+  - name: liatrio
+    source: lever
+    slug: liatrio
+    enabled: true
+  - name: aircall
+    source: lever
+    slug: aircall
+    enabled: true
+  - name: straighterline
+    source: lever
+    slug: straighterline
+    enabled: true
+  - name: teamsnap
+    source: lever
+    slug: teamsnap
+    enabled: true
+  - name: padsplit
+    source: lever
+    slug: padsplit
+    enabled: true
+  - name: crosslaketech
+    source: lever
+    slug: crosslaketech
+    enabled: true
+  - name: unstructuredtechnologies
+    source: lever
+    slug: unstructuredtechnologies
+    enabled: true
+  - name: blackbirdinteractive
+    source: lever
+    slug: blackbirdinteractive
+    enabled: true
+  - name: wavicledata
+    source: lever
+    slug: wavicledata
+    enabled: true
+  - name: grantstreet
+    source: lever
+    slug: grantstreet
+    enabled: true
+  - name: redoxengine
+    source: lever
+    slug: redoxengine
+    enabled: true
+  - name: workwave
+    source: lever
+    slug: workwave
+    enabled: true
+  - name: entefy
+    source: lever
+    slug: entefy
+    enabled: true
+  - name: ethenalabs
+    source: lever
+    slug: ethenalabs
+    enabled: true
+  - name: morningconsult
+    source: lever
+    slug: morningconsult
+    enabled: true
+  - name: magnify
+    source: lever
+    slug: magnify
+    enabled: true
+  - name: captivateiq
+    source: lever
+    slug: captivateiq
+    enabled: true
+  - name: netomi
+    source: lever
+    slug: netomi
+    enabled: true
+  - name: offchainlabs
+    source: lever
+    slug: offchainlabs
+    enabled: true
+  - name: foodsmart
+    source: lever
+    slug: foodsmart
+    enabled: true
+  - name: ntt-data-aivista
+    source: ashby
+    slug: ntt-data-aivista
+    enabled: true
+  - name: homera-health
+    source: ashby
+    slug: homera-health
+    enabled: true
+  - name: read-ai
+    source: ashby
+    slug: read-ai
+    enabled: true
+  - name: deepwalk
+    source: ashby
+    slug: deepwalk
+    enabled: true
+  - name: neuroscale
+    source: ashby
+    slug: neuroscale
+    enabled: true
+  - name: junipersquare
+    source: ashby
+    slug: junipersquare
+    enabled: true
+  - name: hive.co
+    source: ashby
+    slug: hive.co
+    enabled: true
+  - name: dash0
+    source: ashby
+    slug: dash0
+    enabled: true
+  - name: optro
+    source: ashby
+    slug: optro
+    enabled: true
+  - name: evertune
+    source: ashby
+    slug: evertune
+    enabled: true
+  - name: gamechanger
+    source: ashby
+    slug: gamechanger
+    enabled: true
+  - name: rula
+    source: ashby
+    slug: rula
+    enabled: true
+  - name: atticus
+    source: ashby
+    slug: atticus
+    enabled: true
+  - name: wundergraph
+    source: ashby
+    slug: wundergraph
+    enabled: true
+  - name: found
+    source: ashby
+    slug: found
+    enabled: true
+  - name: scholarly
+    source: ashby
+    slug: scholarly
+    enabled: true
+  - name: close
+    source: ashby
+    slug: close
+    enabled: true
+  - name: inductive-automation-llc
+    source: ashby
+    slug: inductive-automation-llc
+    enabled: true
+  - name: nomad
+    source: ashby
+    slug: nomad
+    enabled: true
+  - name: nerdwallet
+    source: ashby
+    slug: nerdwallet
+    enabled: true
+  - name: wheel
+    source: ashby
+    slug: wheel
+    enabled: true
+  - name: confluent
+    source: ashby
+    slug: confluent
+    enabled: true
+  - name: astra
+    source: ashby
+    slug: astra
+    enabled: true
+  - name: atlan
+    source: ashby
+    slug: atlan
+    enabled: true
+  - name: onebrief
+    source: ashby
+    slug: onebrief
+    enabled: true
+  - name: twelve-labs
+    source: ashby
+    slug: twelve-labs
+    enabled: true
+  - name: growthprotocol
+    source: ashby
+    slug: growthprotocol
+    enabled: true
+  - name: rogerhealthcare
+    source: ashby
+    slug: rogerhealthcare
+    enabled: true
+  - name: phonely
+    source: ashby
+    slug: phonely
+    enabled: true
+  - name: vetcove
+    source: ashby
+    slug: vetcove
+    enabled: true
+  - name: stellar-health
+    source: ashby
+    slug: stellar-health
+    enabled: true
+  - name: revenuecat
+    source: ashby
+    slug: revenuecat
+    enabled: true
+  - name: mdcalc
+    source: ashby
+    slug: mdcalc
     enabled: true
