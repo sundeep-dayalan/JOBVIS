@@ -57,6 +57,9 @@ venv.bak/
 *.swo
 *~
 
+# Claude Code
+.claude/
+
 # Logs and databases
 logs/
 *.log
