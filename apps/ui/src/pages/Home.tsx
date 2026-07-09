@@ -1,5 +1,5 @@
 import { API_BASE, WS_BASE } from '../config'
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 export type JobStatusEnum = 'ACTIVE' | 'IGNORED' | 'APPLIED' | 'ALL';
 
@@ -72,6 +72,10 @@ function Home() {
   const [datePreset, setDatePreset] = useState<DatePreset>('24HR');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
+
+  // ── Pagination state (render-only; does not affect what gets filtered) ─────
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(50);
 
 
   const fetchJobsData = async () => {
@@ -147,55 +151,74 @@ function Home() {
     }
   }, [datePreset]);
 
-  // Auto-select the first job ONLY when there is no valid current selection.
-  // Never overwrite an existing selection just because jobs re-fetched.
+  // ── Filtering logic (client-side; single /api/jobs fetch) ──────────────────
+  // ALL filtering stays in the client and is unchanged. Pagination below only
+  // slices this already-filtered list for rendering — it never alters what is
+  // filtered, nor what "select all" / bulk actions operate on.
+  const filteredJobs = useMemo(() => {
+    const statusFiltered = statusFilter === 'ALL' ? jobs : jobs.filter(job => job.status === statusFilter);
+
+    return statusFiltered.filter(job => {
+      // Always filter on created_at (DB insert time) — NOT job_posted_at (LinkedIn posting date).
+      // A job posted a week ago on LinkedIn but scanned 5 minutes ago must appear in the 15 MIN window.
+      const scanned = parseDateStr(job.created_at);
+
+      // Hour-based preset window
+      const hours = PRESET_HOURS[datePreset];
+      if (hours !== null && scanned) {
+        const cutoff = new Date(Date.now() - hours * 3_600_000);
+        if (scanned < cutoff) return false;
+      }
+
+      // Custom FROM/TO date pickers (only active when preset is ALL)
+      if (datePreset === 'ALL') {
+        if (dateFrom && scanned) {
+          const from = new Date(dateFrom);
+          from.setHours(0, 0, 0, 0);
+          if (scanned < from) return false;
+        }
+        if (dateTo && scanned) {
+          const to = new Date(dateTo);
+          to.setHours(23, 59, 59, 999);
+          if (scanned > to) return false;
+        }
+      }
+
+      return true;
+    });
+  }, [jobs, statusFilter, datePreset, dateFrom, dateTo]);
+
+  // ── Pagination (render-only windowing over the filtered list) ──────────────
+  const totalPages = Math.max(1, Math.ceil(filteredJobs.length / pageSize));
+  const pageStart = (currentPage - 1) * pageSize;
+  const pagedJobs = useMemo(
+    () => filteredJobs.slice(pageStart, pageStart + pageSize),
+    [filteredJobs, pageStart, pageSize]
+  );
+
+  // Reset to page 1 whenever the active filter set (or page size) changes, so we
+  // never land on a now-empty page after the result count shrinks.
   useEffect(() => {
-    const visibleJobs = statusFilter === 'ALL'
-      ? jobs
-      : jobs.filter(job => job.status === statusFilter);
+    setCurrentPage(1);
+  }, [statusFilter, datePreset, dateFrom, dateTo, pageSize]);
 
-    const currentStillVisible = visibleJobs.some(j => j.id === selectedJobId);
+  // Clamp the page if the filtered set shrinks under us (e.g. after delete/move).
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [totalPages, currentPage]);
+
+  // Auto-select the first filtered job ONLY when there is no valid current
+  // selection. Selection is tracked across ALL pages, so paging never drops it.
+  useEffect(() => {
+    const currentStillVisible = filteredJobs.some(j => j.id === selectedJobId);
     if (currentStillVisible) return; // keep the current selection intact
+    setSelectedJobId(filteredJobs.length > 0 ? filteredJobs[0].id : null);
+  }, [filteredJobs, selectedJobId]);
 
-    // No selection or selected job gone — pick the first visible job
-    setSelectedJobId(visibleJobs.length > 0 ? visibleJobs[0].id : null);
-  }, [statusFilter, jobs]);
-
+  // Clear bulk selection when the status tab changes.
   useEffect(() => {
     setSelectedRescanIds(new Set());
   }, [statusFilter]);
-
-  // ── Filtering logic ───────────────────────────────────────────────────────
-  const statusFiltered = statusFilter === 'ALL' ? jobs : jobs.filter(job => job.status === statusFilter);
-
-  const filteredJobs = statusFiltered.filter(job => {
-    // Always filter on created_at (DB insert time) — NOT job_posted_at (LinkedIn posting date).
-    // A job posted a week ago on LinkedIn but scanned 5 minutes ago must appear in the 15 MIN window.
-    const scanned = parseDateStr(job.created_at);
-
-    // Hour-based preset window
-    const hours = PRESET_HOURS[datePreset];
-    if (hours !== null && scanned) {
-      const cutoff = new Date(Date.now() - hours * 3_600_000);
-      if (scanned < cutoff) return false;
-    }
-
-    // Custom FROM/TO date pickers (only active when preset is ALL)
-    if (datePreset === 'ALL') {
-      if (dateFrom && scanned) {
-        const from = new Date(dateFrom);
-        from.setHours(0, 0, 0, 0);
-        if (scanned < from) return false;
-      }
-      if (dateTo && scanned) {
-        const to = new Date(dateTo);
-        to.setHours(23, 59, 59, 999);
-        if (scanned > to) return false;
-      }
-    }
-
-    return true;
-  });
 
   const selectedJob = filteredJobs.find(job => job.id === selectedJobId) || null;
   const isDateActive = datePreset !== 'ALL' || !!dateFrom || !!dateTo;
@@ -509,9 +532,10 @@ function Home() {
       {!loading && !error && filteredJobs.length > 0 && (
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden', gap: '2rem' }}>
 
-          {/* Left Pane (Scrollable Feed) */}
-          <div style={{ width: '35%', display: 'flex', flexDirection: 'column', overflowY: 'auto', gap: '1rem', paddingRight: '0.5rem' }}>
-            {filteredJobs.map(job => (
+          {/* Left Pane (Scrollable Feed + pinned pager) */}
+          <div style={{ width: '35%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflowY: 'auto', gap: '1rem', paddingRight: '0.5rem' }}>
+            {pagedJobs.map(job => (
               <div
                 key={job.id}
                 onClick={() => setSelectedJobId(job.id)}
@@ -590,6 +614,68 @@ function Home() {
                 )}
               </div>
             ))}
+            </div>
+
+            {/* ── Pager (pinned below the feed, outside the scroll area) ──── */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '0.5rem',
+              padding: '0.6rem 0.5rem 0.2rem',
+              borderTop: '1px solid var(--border-color)',
+              marginTop: '0.5rem',
+              flexShrink: 0,
+              flexWrap: 'wrap',
+            }}>
+              <span style={{ color: '#666', fontSize: '0.72rem', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>
+                {filteredJobs.length === 0
+                  ? '0 RESULTS'
+                  : `${pageStart + 1}–${Math.min(pageStart + pageSize, filteredJobs.length)} OF ${filteredJobs.length}`}
+              </span>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                <button
+                  className="btn"
+                  style={{ padding: '0.25rem 0.55rem', fontSize: '0.75rem', opacity: currentPage <= 1 ? 0.4 : 1 }}
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                >‹ PREV</button>
+
+                <span style={{ color: 'var(--text-dim)', fontSize: '0.75rem', letterSpacing: '0.5px', whiteSpace: 'nowrap', minWidth: '64px', textAlign: 'center' }}>
+                  {currentPage} / {totalPages}
+                </span>
+
+                <button
+                  className="btn"
+                  style={{ padding: '0.25rem 0.55rem', fontSize: '0.75rem', opacity: currentPage >= totalPages ? 0.4 : 1 }}
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                >NEXT ›</button>
+              </div>
+
+              <select
+                value={pageSize}
+                onChange={e => setPageSize(Number(e.target.value))}
+                title="Results per page"
+                style={{
+                  background: 'rgba(0,0,0,0.5)',
+                  border: '1px solid var(--border-color)',
+                  color: 'var(--text-dim)',
+                  padding: '0.2rem 0.35rem',
+                  fontFamily: 'inherit',
+                  fontSize: '0.72rem',
+                  borderRadius: '2px',
+                  outline: 'none',
+                  colorScheme: 'dark',
+                  cursor: 'pointer',
+                }}
+              >
+                {[25, 50, 100, 200].map(n => (
+                  <option key={n} value={n}>{n} / PAGE</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {/* Right Pane (Deep Dive AI Telemetry Panel) */}

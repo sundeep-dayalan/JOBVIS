@@ -79,22 +79,34 @@ class JobPipeline:
         Supports any source value (linkedin, ashby, etc.)
         """
         logger.info("[Pipeline] Filtering and deduplicating {} jobs.", len(jobs))
-        
-        # Derive source dynamically from the batch (all jobs in a batch share the same source)
-        source = jobs[0].get("source", "unknown") if jobs else "unknown"
+
+        # A single batch can span MULTIPLE sources — e.g. a "rescan all" mixes
+        # linkedin + ashby + greenhouse + lever. Dedup must therefore key on the
+        # composite (source, source_id) — the exact pair the DB unique constraint
+        # (uq_source_id_source) enforces — NOT source_id alone. Keying on source_id
+        # alone (scoped to jobs[0]'s source) misclassifies every job from a *different*
+        # source as a brand-new INSERT, which then collides with its existing row.
         source_ids = [job.get("source_id") for job in jobs if job.get("source_id")]
-        logger.debug("[Pipeline] Source: {} | Source IDs count: {}", source, len(source_ids))
-        
-        # 1. Grab all existing records for this source
-        existing_records = db.query(models.JobPosition.source_id, models.JobPosition.status).filter(
-            models.JobPosition.source == source,
+        sources = {job.get("source") for job in jobs if job.get("source")}
+        logger.debug("[Pipeline] Sources: {} | Source IDs count: {}", sources, len(source_ids))
+
+        # 1. Grab all existing rows whose source_id appears in this batch. Filtering
+        #    on source_id alone can over-fetch across sources, but the composite key
+        #    below disambiguates correctly (and identical source_ids across sources
+        #    are extremely rare).
+        existing_records = db.query(
+            models.JobPosition.source,
+            models.JobPosition.source_id,
+            models.JobPosition.status,
+        ).filter(
             models.JobPosition.source_id.in_(source_ids)
         ).all()
         logger.debug("[Pipeline] Existing records in DB: {}", len(existing_records))
-        
-        # Build O(1) dictionary: { "jobId_123": "IGNORED", "jobId_456": "ACTIVE" }
-        existing_map = {rec.source_id: rec.status for rec in existing_records}
-        logger.debug("[Pipeline] Existing jobs map: {}", existing_map)
+
+        # Build O(1) dictionary keyed by the composite pair:
+        #   { ("greenhouse", "7735000003"): "ACTIVE", ("linkedin", "123"): "IGNORED" }
+        existing_map = {(rec.source, rec.source_id): rec.status for rec in existing_records}
+        logger.debug("[Pipeline] Existing jobs map size: {}", len(existing_map))
         
         result = {
             "upserts": [],          # Jobs to jump to LLM and overwrite Postgres status
@@ -112,14 +124,16 @@ class JobPipeline:
                 logger.debug("[Pipeline] Job '{}' skipped: Malformed payload", job.get('title'))
                 continue
 
-              
+            # Composite identity — must match the DB's (source_id, source) unique key.
+            job_key = (job.get("source"), job_id)
+
             current_status, current_reason = self.apply_preliminary_filters(job)
-            
+
             # The job will carry its metadata payload
             job_tuple = (job, current_status, current_reason)
-            
-            if job_id in existing_map:
-                history_status = existing_map[job_id]
+
+            if job_key in existing_map:
+                history_status = existing_map[job_key]
                 
                 # If it's a standard background Deep Scan, securely drop any duplicate to prevent AI infinite loops
                 if not force_rescan:
