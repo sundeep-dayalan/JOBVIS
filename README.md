@@ -56,7 +56,7 @@ flowchart TD
 | AI Engine | LLM, Prompt Engineering |
 | Scrapers | Ashby, Greenhouse, Lever |
 | Frontend | React 18, TypeScript, Vite |
-| Scheduler | APScheduler |
+| Scheduler | Custom asyncio scheduler |
 
 ---
 
@@ -88,14 +88,31 @@ JOBVIS/
 - **Multi-source scraping** — Ashby, Greenhouse, and Lever job boards
 - **AI-powered matching** — LLM scores each job against your CV and target criteria
 - **Smart filtering pipeline** — title, location, and JD relevance filters before LLM call
-- **Scheduled ingestion** — APScheduler runs scraping jobs automatically
-- **Chrome Extension** — capture jobs directly from Ashby in your browser
+- **Scheduled ingestion** — a built-in asyncio scheduler runs the ATS scrapers automatically
+- **Chrome Extension** — capture jobs directly from LinkedIn in your browser
 
 ---
 
 ## Getting Started
 
-### Server
+### 1. Configure (do this first)
+
+JOBVIS is driven entirely by files in `config/` plus a root `.env`. Set these up before running:
+
+| File | What to put there |
+|------|-------------------|
+| `.env` | Copy `.env.example` → `.env` and add the API key for your LLM provider. Local providers (Ollama/MLX) need no key. |
+| `config/cv.md` | Your résumé — injected into the AI scoring prompt. |
+| `apps/server/prompts/JobMatchAnalyst.md` | Fill in the `CANDIDATE PROFILE` block (experience range, work authorization, location, salary floor). |
+| `config/filter.yml` | Title / location / job-description keyword filters that run before the LLM. |
+| `config/llm_config.yml` | Select your active LLM provider (Gemini, Groq, Ollama, or MLX). |
+| `config/portals.yml` | *(Optional)* Company boards + LinkedIn search URLs to scrape. |
+
+```bash
+cp .env.example .env   # then edit .env and add your API key
+```
+
+### 2. Server
 
 ```bash
 cd apps/server
@@ -104,13 +121,13 @@ pip install -r requirements.txt
 python main.py
 ```
 
-### Chrome Extension
+### 3. Chrome Extension
 
 1. Open `chrome://extensions`
 2. Enable **Developer mode**
 3. Click **Load unpacked** → select `apps/extension`
 
-### Dashboard UI
+### 4. Dashboard UI
 
 ```bash
 cd apps/ui
@@ -123,3 +140,9 @@ npm run dev
 ## Author
 
 **Sundeep Dayalan** · [Portfolio](https://sundeepdayalan.in) · [LinkedIn](https://linkedin.com/in/sundeep-dayalan)
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE).
