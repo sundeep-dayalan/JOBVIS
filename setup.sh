@@ -38,7 +38,7 @@ printf "${BOLD}         JOBVIS — First-Run Setup             ${RST}\n"
 printf "${BOLD}==============================================${RST}\n"
 
 # ── 1. Prerequisites ─────────────────────────────────────────────────────────
-step "[1/5] Checking prerequisites"
+step "[1/6] Checking prerequisites"
 
 if command -v docker >/dev/null 2>&1; then
   if docker info >/dev/null 2>&1; then
@@ -83,7 +83,7 @@ if [ "$FAIL" -ne 0 ]; then
 fi
 
 # ── 2. Environment (.env + LLM provider) ─────────────────────────────────────
-step "[2/5] Configuring environment (.env)"
+step "[2/6] Configuring environment (.env)"
 
 set_env_var() {
   # set_env_var KEY VALUE — replaces KEY's line in .env, or appends if missing
@@ -146,7 +146,7 @@ case "$CH" in
 esac
 
 # ── 3. Server dependencies (Python venv) ─────────────────────────────────────
-step "[3/5] Installing server dependencies"
+step "[3/6] Installing server dependencies"
 if [ -d "$ROOT/apps/server/venv" ]; then
   ok "Python venv already exists — skipping (delete apps/server/venv to rebuild)"
 else
@@ -168,7 +168,7 @@ if [ -d "$ROOT/apps/server/venv" ]; then
 fi
 
 # ── 4. Dashboard UI dependencies (npm) ───────────────────────────────────────
-step "[4/5] Installing dashboard UI dependencies"
+step "[4/6] Installing dashboard UI dependencies"
 if [ -d "$ROOT/apps/ui/node_modules" ]; then
   ok "node_modules already present — skipping (delete apps/ui/node_modules to reinstall)"
 else
@@ -181,7 +181,7 @@ else
 fi
 
 # ── 5. Candidate profile for AI scoring ──────────────────────────────────────
-step "[5/5] Your candidate profile (drives the AI job scoring)"
+step "[5/6] Your candidate profile (drives the AI job scoring)"
 
 PROMPT_FILE="$ROOT/apps/server/prompts/JobMatchAnalyst.md"
 PROFILE_TOKENS='<MIN_YEARS>|<WORK_AUTH>|<CLEARANCE>|<ALLOWED_LOCATIONS>|<EMPLOYMENT_TYPE>|<SALARY_FLOOR>'
@@ -259,7 +259,114 @@ if grep -q "YOUR FULL NAME" "$ROOT/config/cv.md" 2>/dev/null; then
 else
   ok "config/cv.md looks filled in"
 fi
-ok "config/filter.yml & config/portals.yml ship with working examples — tune them to taste"
+ok "config/portals.yml ships with example boards — edit it to track your target companies"
+
+# ── 6. Keyword & location filters ────────────────────────────────────────────
+step "[6/6] Job filters (cheap pre-screen that runs BEFORE the AI scores anything)"
+
+FILTER_FILE="$ROOT/config/filter.yml"
+if [ ! -f "$FILTER_FILE" ]; then
+  warn "config/filter.yml not found — skipping filter setup"
+else
+  printf "  ${DIM}These drop obvious non-matches before the (costly) LLM call. The file already\n  ships with working examples — press Enter to KEEP them, or type a comma-separated\n  list to REPLACE that filter with your own.${RST}\n"
+
+  ask_filter() {
+    # ask_filter VAR "why this filter exists" "example values"
+    local __var="$1" why="$2" ex="$3" reply
+    printf "\n  ${BOLD}%s${RST}\n" "$why"
+    printf "    ${DIM}examples: %s${RST}\n" "$ex"
+    read -rp "    your values (comma-separated) or Enter to keep: " reply
+    printf -v "$__var" '%s' "$reply"
+  }
+
+  ask_filter FL_TITLE_INC "TITLE must contain one of these, or the job is skipped (keep it broad)." "Software Engineer, Backend, Full Stack, AI, ML, Developer"
+  ask_filter FL_TITLE_EXC "TITLE is rejected instantly if it contains any of these (kill mismatches)." "Junior, Intern, Manager, Director, .NET, iOS, Android"
+  ask_filter FL_JD_INC "DESCRIPTION must mention at least one of these — your core stack." "Python, Java, AWS, Kafka, React, TypeScript"
+  ask_filter FL_JD_EXC "Reject if the DESCRIPTION contains any of these (hard dealbreakers)." "Secret clearance, US citizenship required, TS/SCI"
+  ask_filter FL_LOC "Only these LOCATIONS pass (plus anything 'remote'); a blank location passes through to the LLM." "remote, Seattle, WA, Bellevue, New York"
+
+  if [ -n "${FL_TITLE_INC:-}${FL_TITLE_EXC:-}${FL_JD_INC:-}${FL_JD_EXC:-}${FL_LOC:-}" ]; then
+    RESULT=$(FILTER_FILE="$FILTER_FILE" \
+      FL_TITLE_INC="${FL_TITLE_INC:-}" FL_TITLE_EXC="${FL_TITLE_EXC:-}" \
+      FL_JD_INC="${FL_JD_INC:-}" FL_JD_EXC="${FL_JD_EXC:-}" FL_LOC="${FL_LOC:-}" \
+      python3 - <<'PYEOF'
+import os
+path = os.environ["FILTER_FILE"]
+fields = [
+    ("title_filter",           "include_any", "FL_TITLE_INC"),
+    ("title_filter",           "exclude_any", "FL_TITLE_EXC"),
+    ("job_description_filter",  "include_any", "FL_JD_INC"),
+    ("job_description_filter",  "exclude_any", "FL_JD_EXC"),
+    ("location_filter",         "include_any", "FL_LOC"),
+]
+with open(path, encoding="utf-8") as f:
+    lines = f.read().split("\n")
+
+def set_list(lines, parent, child, items):
+    # locate "parent:" at column 0
+    pi = -1
+    for i, l in enumerate(lines):
+        if l.startswith(parent + ":") and l[len(parent) + 1:].strip() == "":
+            pi = i; break
+    if pi < 0:
+        return lines
+    # locate "child:" indented beneath it (stop at the next top-level key)
+    ci = -1
+    for j in range(pi + 1, len(lines)):
+        l = lines[j]
+        if l and not l[0].isspace():
+            break
+        if l.strip() == child + ":":
+            ci = j; break
+    if ci < 0:
+        return lines
+    child_indent = len(lines[ci]) - len(lines[ci].lstrip())
+    item_indent = child_indent + 2
+    # Remove the whole existing list — items, interleaved sub-comments, AND the
+    # blank lines that separate sub-groups — up to the next sibling/parent key
+    # (the first non-blank line indented at or above the child key). Stopping at
+    # the first blank would leave later sub-groups behind.
+    k = ci + 1
+    while k < len(lines):
+        l = lines[k]
+        if l.strip() == "":
+            k += 1; continue                       # blank within the block — drop it
+        if (len(l) - len(l.lstrip())) <= child_indent:
+            break                                  # next sibling/parent key — stop
+        k += 1                                     # deeper line (item/comment) — drop
+    new_items = [(" " * item_indent) + '- "' + it + '"' for it in items]
+    # Preserve one blank line before a following top-level section
+    tail = [""] if (k < len(lines) and lines[k].strip() != "" and not lines[k][0].isspace()) else []
+    lines[ci + 1:k] = new_items + tail
+    return lines
+
+changed = []
+for parent, child, envk in fields:
+    raw = os.environ.get(envk, "").strip()
+    if not raw:
+        continue
+    items = [x.strip() for x in raw.split(",") if x.strip()]
+    if not items:
+        continue
+    lines = set_list(lines, parent, child, items)
+    changed.append("%s.%s(%d)" % (parent, child, len(items)))
+
+if changed:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+print(", ".join(changed))
+PYEOF
+)
+    if [ -n "$RESULT" ]; then
+      ok "Filters replaced: $RESULT"
+    else
+      warn "Nothing to change"
+    fi
+  else
+    ok "Kept all example filters"
+  fi
+  printf "  ${DIM}Advanced (regex pay-rate excludes, etc.) live in config/filter.yml — edit anytime.${RST}\n"
+fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 printf "\n${BOLD}----------------------------------------------${RST}\n"
