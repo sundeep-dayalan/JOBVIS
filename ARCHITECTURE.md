@@ -157,7 +157,6 @@ One row per job. Highlights:
 | `filter.yml` | Preliminary filters: `title_filter` (include/exclude), `job_description_filter` (include/exclude + regex `description_pattern_excludes`), `location_filter` (allowlist), plus `linkedin-filter` / `experience_filter` hints. |
 | `llm_config.yml` | `llm-providers` list; the `active` one drives `LLMEngine`. |
 | `portals.yml` | `linkedin_search_urls` (cycled by the extension auto-scrape) and `tracked_companies` (per-source `{name, source, slug, enabled}` used by the server scrapers). |
-| `profile.yml` | Candidate profile / narrative metadata (target roles, comp, location, visa status). |
 | `settings.dev.yml` / `settings.prod.yml` | Per-environment runtime state: `pipeline` toggles (`ai_scoring_enabled`, `*_description_fetch_enabled`) and `scheduler` config (`enabled` + `interval_minutes` per source). Read live and writable via `PATCH /api/settings`. |
 
 ---

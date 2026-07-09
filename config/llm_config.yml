@@ -17,7 +17,7 @@ llm-providers:
   #   num_predict: 2048
   #   concurrency: 1
 
-# ── Ollama (local) ──────────────────────────────────────────────────────────
+  # ── Ollama (local) ──────────────────────────────────────────────────────────
   # - provider: ollama
   #   name: ollama-qwen2.5-7b-instruct-q4_K_M-local
   #   model: qwen2.5:7b-instruct-q4_K_M
@@ -48,7 +48,8 @@ llm-providers:
   # Other fast MLX models to try (all 4-bit quantized, good quality/speed tradeoff):
   #   mlx-community/Qwen2.5-14B-Instruct-4bit   (better quality, ~2x slower)
   #   mlx-community/Llama-3.2-3B-Instruct-4bit  (fastest, lower quality)
-  #
+  # ──────────────────────────────────────────
+
   # - provider: mlx
   #   name: mlx-qwen2.5-7b-local
   #   model: mlx-community/Qwen2.5-7B-Instruct-4bit
