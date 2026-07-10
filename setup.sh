@@ -377,10 +377,11 @@ else
 fi
 printf "${BOLD}Next steps:${RST}\n"
 printf "  1. Paste your résumé into ${CYN}config/cv.md${RST}   ${DIM}(your profile & filters were set above)${RST}\n"
-printf "  2. Launch everything:    ${BOLD}./start.sh${RST}   ${DIM}(this generates the extension's config.js)${RST}\n"
+printf "  2. Launch everything:    ${BOLD}./start.sh${RST}   ${DIM}(runs PRODUCTION; also generates the extension's config.js)${RST}\n"
 printf "  3. Load the extension:   chrome://extensions -> Developer mode -> Load unpacked -> ${CYN}apps/extension${RST}\n"
 printf "     ${DIM}Do this AFTER the first ./start.sh — the extension reads config.js, which start.sh creates.${RST}\n"
-printf "     ${DIM}You only need to reload it if you later switch between dev and prod (the port changes).${RST}\n"
-printf "  4. Open the dashboard:   ${CYN}http://localhost:5173${RST}, then use the Settings page to enable scrapers.\n\n"
+printf "     ${DIM}You only need to reload it if you later switch between prod and dev (the port changes).${RST}\n"
+printf "  4. Open the dashboard:   ${CYN}http://localhost:1997${RST}, then use the Settings page to enable scrapers.\n\n"
+printf "${DIM}Tip: ./start.sh runs PRODUCTION (your main data). Use './start.sh dev' for an isolated\n     development database on separate ports (dashboard at :5173) — handy for experiments.${RST}\n\n"
 
 exit 0

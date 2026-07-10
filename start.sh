@@ -3,12 +3,15 @@
 clear
 set -e
 
-ENV_MODE="dev"
-if [ "$1" == "--prod" ]; then
-    ENV_MODE="prod"
-    echo "Starting in PRODUCTION mode..."
-else
+# Default mode is PRODUCTION (your real, primary database).
+# Pass "dev" to run the isolated development environment instead
+# (separate database + separate ports — see the README).
+ENV_MODE="prod"
+if [ "$1" == "dev" ] || [ "$1" == "--dev" ]; then
+    ENV_MODE="dev"
     echo "Starting in DEVELOPMENT mode..."
+else
+    echo "Starting in PRODUCTION mode..."
 fi
 
 # ── Port assignment ─────────────────────────────────────────────────────────
