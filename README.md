@@ -96,7 +96,7 @@ Install these **before** you start. The setup wizard checks for them and tells y
 ### 1. Get the code
 
 ```bash
-git clone <your-repo-url> jobvis
+git clone https://github.com/sundeep-dayalan/JOBVIS jobvis
 cd jobvis
 ```
 
