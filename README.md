@@ -6,12 +6,18 @@
 
 *Catch new jobs the moment they post — filtered, AI-scored, and ranked against your résumé.*
 
+### 🏆 The system I built — and used to land a role at a FAANG company.
+
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://reactjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://typescriptlang.org)
 [![Chrome Extension](https://img.shields.io/badge/Chrome_Extension-MV3-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
+
+<br>
+
+<img src="docs/images/dashboard.png" alt="JOBVIS dashboard — a ranked, AI-scored job list with filters and one-click apply" width="900">
 
 </div>
 
@@ -60,6 +66,12 @@ flowchart LR
 2. **Cheap filters run first** — title / location / keyword rules instantly drop obvious mismatches (no AI call wasted on junk).
 3. **AI scores the survivors** — each remaining job is graded 0–100 against your résumé + profile. Anything below the threshold is auto-hidden.
 4. **You review the winners** — a ranked dashboard with the AI's reasoning, status/date filters, and one-click apply links.
+
+The **Settings** page maps this exact flow — the two ingestion paths (LinkedIn extension + server scrapers) converging into the shared evaluation pipeline, where you enable each source and inspect every step:
+
+<div align="center">
+  <img src="docs/images/settings-pipeline.png" alt="JOBVIS Settings — the ingestion and evaluation pipeline for Ashby, Greenhouse, Lever, and LinkedIn" width="900">
+</div>
 
 ---
 
