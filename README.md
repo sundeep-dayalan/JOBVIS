@@ -130,9 +130,15 @@ This starts the **database**, the **server**, and the **dashboard** together in 
 1. Go to **http://localhost:1997**
 2. Open the **Settings** page to enable the job scrapers (Ashby / Greenhouse / Lever) or trigger a run
 3. Or browse LinkedIn with the extension active to feed in LinkedIn jobs
-4. Watch results appear on the **Home** page — ranked, scored, and filtered
+4. Watch jobs flow into the **Home** page — keyword-filtered and saved
 
 🎉 That's it. From now on you only ever need **`./start.sh`** to run JOBVIS.
+
+> [!IMPORTANT]
+> ### ⚠️ AI scoring is intentionally OFF on your first runs
+> When JOBVIS first scans, it pulls in **every** job it can find — and most of them aren't worth spending AI tokens on. So AI scoring starts **disabled**: the early runs just **collect and keyword-filter** jobs into your database — fast, free, and no AI calls.
+>
+> Once jobs are flowing in and your filters look right, **turn on AI scoring from the Settings page**. From then on, new jobs are automatically graded **0–100 against your résumé** and low scorers are hidden. To score the jobs you *already* collected, select them on **Home** and hit **Re-Scan**.
 
 ---
 
@@ -179,6 +185,11 @@ Changed your résumé, filters, or profile? Select jobs on **Home** and hit **Re
 All your settings live in the **`config/`** folder (plus a root `.env`). This is where you'll spend your tuning time. The **setup wizard fills most of it in for you**; this section explains what each file and option does so you never get stuck.
 
 > After editing any config file, the change is picked up on the **next scan** — no restart needed. (Editing `.env` or `config/llm_config.yml` does need a restart, since those load at startup.)
+
+<details>
+<summary><b>📖 Click to expand — full reference for every config file &amp; option</b></summary>
+
+<br>
 
 ### `.env` — your secret API keys
 Created by the wizard from `.env.example`. Holds the API key for your AI provider. **Never commit this file** (it's gitignored).
@@ -302,6 +313,8 @@ scheduler:
   linkedin:   { enabled: true, interval_minutes: 120 }   # tells the extension how often to auto-scrape
 ```
 `settings.prod.yml` applies to `./start.sh`; `settings.dev.yml` applies to `./start.sh dev`.
+
+</details>
 
 ---
 
